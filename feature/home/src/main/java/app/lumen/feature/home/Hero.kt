@@ -20,7 +20,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
@@ -37,7 +36,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.dp
 import app.lumen.core.apps.AppInfo
@@ -87,24 +85,18 @@ private fun HeroContent(app: AppInfo) {
 
 @Composable
 private fun HeroArt(app: AppInfo, modifier: Modifier) {
-    val banner = remember(app.banner) { app.banner?.asImageBitmap() }
-    val icon = remember(app.icon) { app.icon.asImageBitmap() }
-    val accent = Color(app.accentColor)
+    val art = remember(app.art) { app.art.asImageBitmap() }
     val shape = RoundedCornerShape(18.dp)
-    Box(
+    Image(
+        art,
+        app.label,
         modifier
             .aspectRatio(16f / 9f)
             .shadow(36.dp, shape, ambientColor = Color.Black, spotColor = Color.Black)
-            .clip(shape)
-            .background(Brush.verticalGradient(listOf(lerp(accent, Color.White, 0.16f), accent))),
-        contentAlignment = Alignment.Center,
-    ) {
-        if (banner != null) {
-            Image(banner, app.label, Modifier.fillMaxSize(), contentScale = ContentScale.Crop, filterQuality = FilterQuality.High)
-        } else {
-            Image(icon, app.label, Modifier.size(96.dp), filterQuality = FilterQuality.High)
-        }
-    }
+            .clip(shape),
+        contentScale = ContentScale.Crop,
+        filterQuality = FilterQuality.High,
+    )
 }
 
 /**

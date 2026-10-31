@@ -9,8 +9,8 @@ data class AppInfo(
     val packageName: String,
     val activityName: String,
     val label: String,
-    /** The 16:9 TV banner, if the app ships one. Most TV apps do. */
-    val banner: Bitmap?,
+    /** 16:9 tile artwork: the app's TV banner when it has a sharp one, otherwise a card built from its icon. */
+    val art: Bitmap,
     val icon: Bitmap,
     /** A deep, saturated color derived from the icon, used behind icon-only tiles. */
     val accentColor: Int,

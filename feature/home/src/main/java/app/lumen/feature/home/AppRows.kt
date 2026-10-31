@@ -14,7 +14,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.focusRestorer
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.unit.dp
 import app.lumen.core.apps.AppInfo
@@ -80,13 +79,10 @@ internal fun AppGridRow(
 
 @Composable
 private fun LauncherTile(app: AppInfo, actions: TileActions, tileModifier: Modifier) {
-    val banner = remember(app.banner) { app.banner?.asImageBitmap() }
-    val icon = remember(app.icon) { app.icon.asImageBitmap() }
+    val art = remember(app.art) { app.art.asImageBitmap() }
     AppTile(
         label = app.label,
-        banner = banner,
-        icon = icon,
-        accent = Color(app.accentColor),
+        art = art,
         onClick = { actions.onLaunch(app) },
         onLongClick = { actions.onOptions(app) },
         onFocused = { actions.onFocused(app) },

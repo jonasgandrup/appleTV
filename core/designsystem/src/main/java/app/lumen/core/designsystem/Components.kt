@@ -30,6 +30,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -43,7 +44,11 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
@@ -51,6 +56,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -74,15 +80,25 @@ fun LumenText(
 }
 
 /**
- * A tvOS-style app tile: lifts and grows on focus, catches a sweep of light, and reveals its
- * label underneath. Shows the app's 16:9 banner, or its icon on an accent-colored card.
+ * The D-pad direction that last moved focus between tiles, so the newly focused tile can carry
+ * that motion. Read and cleared by the tile that gains focus; focus arriving from anything
+ * other than a tile leaves it at zero, so that tile doesn't lean.
+ */
+private object TileMotion {
+    var dx = 0f
+    var dy = 0f
+}
+
+private const val TILT_DEGREES = 6f
+
+/**
+ * A tvOS-style app tile: lifts and grows on focus, leans into D-pad presses, catches a sweep of
+ * light, and reveals its label underneath. [art] is the app's 16:9 tile artwork.
  */
 @Composable
 fun AppTile(
     label: String,
-    banner: ImageBitmap?,
-    icon: ImageBitmap,
-    accent: Color,
+    art: ImageBitmap,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     tileModifier: Modifier = Modifier,
@@ -90,6 +106,21 @@ fun AppTile(
     onFocused: () -> Unit = {},
 ) {
     var focused by remember { mutableStateOf(false) }
+    // -1..1 per axis; positive leans right / down.
+    val tiltX = remember { Animatable(0f) }
+    val tiltY = remember { Animatable(0f) }
+    val scope = rememberCoroutineScope()
+    val settle = spring<Float>(dampingRatio = 0.45f, stiffness = Spring.StiffnessLow)
+    LaunchedEffect(focused) {
+        if (focused) {
+            tiltX.snapTo(TileMotion.dx)
+            tiltY.snapTo(TileMotion.dy)
+            TileMotion.dx = 0f
+            TileMotion.dy = 0f
+        }
+        launch { tiltX.animateTo(0f, settle) }
+        launch { tiltY.animateTo(0f, settle) }
+    }
     val scale by animateFloatAsState(
         targetValue = if (focused) 1.12f else 1f,
         animationSpec = spring(dampingRatio = 0.7f, stiffness = Spring.StiffnessMediumLow),
@@ -114,14 +145,38 @@ fun AppTile(
                     focused = it.isFocused
                     if (it.isFocused) onFocused()
                 }
+                .onPreviewKeyEvent { event ->
+                    if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                    val (dx, dy) = when (event.key) {
+                        Key.DirectionLeft -> -1f to 0f
+                        Key.DirectionRight -> 1f to 0f
+                        Key.DirectionUp -> 0f to -1f
+                        Key.DirectionDown -> 0f to 1f
+                        else -> return@onPreviewKeyEvent false
+                    }
+                    TileMotion.dx = dx
+                    TileMotion.dy = dy
+                    // Lean toward the press. If focus moves on, this tile settles back; at the
+                    // end of a row the lean is the only feedback, like tvOS.
+                    if (event.nativeKeyEvent.repeatCount == 0) {
+                        scope.launch {
+                            launch { tiltX.animateTo(dx * 0.6f, tween(90)); tiltX.animateTo(0f, settle) }
+                            launch { tiltY.animateTo(dy * 0.6f, tween(90)); tiltY.animateTo(0f, settle) }
+                        }
+                    }
+                    false
+                }
                 .tvClickable(onLongClick = onLongClick, onClick = onClick)
                 .graphicsLayer {
                     scaleX = scale
                     scaleY = scale
+                    // The side the remote points toward tips away from the viewer.
+                    rotationY = tiltX.value * TILT_DEGREES
+                    rotationX = -tiltY.value * TILT_DEGREES
+                    cameraDistance = 16f * density
                 }
                 .shadow(elevation, shape, ambientColor = Color.Black, spotColor = Color.Black)
                 .clip(shape)
-                .background(Brush.verticalGradient(listOf(lerp(accent, Color.White, 0.16f), accent)))
                 .drawWithContent {
                     drawContent()
                     // Top gloss while focused.
@@ -144,24 +199,14 @@ fun AppTile(
                         )
                     }
                 },
-            contentAlignment = Alignment.Center,
         ) {
-            if (banner != null) {
-                Image(
-                    bitmap = banner,
-                    contentDescription = label,
-                    modifier = Modifier.fillMaxSize(),
-                    contentScale = ContentScale.Crop,
-                    filterQuality = FilterQuality.High,
-                )
-            } else {
-                Image(
-                    bitmap = icon,
-                    contentDescription = label,
-                    modifier = Modifier.size(50.dp),
-                    filterQuality = FilterQuality.High,
-                )
-            }
+            Image(
+                bitmap = art,
+                contentDescription = label,
+                modifier = Modifier.fillMaxSize(),
+                contentScale = ContentScale.Crop,
+                filterQuality = FilterQuality.High,
+            )
         }
         Spacer(Modifier.height(14.dp))
         LumenText(

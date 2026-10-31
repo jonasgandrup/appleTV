@@ -1,8 +1,11 @@
 package app.lumen.core.designsystem
 
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.ExperimentalTextApi
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontVariation
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -36,14 +39,32 @@ object LumenDimens {
 }
 
 object LumenType {
-    private val Family = FontFamily.SansSerif
+    /** Inter's variable font, cut at its text optical size. */
+    private val Family = inter(opticalSize = 14f)
+
+    /** Inter's display optical size: tighter spacing and finer details for large headlines. */
+    private val DisplayFamily = inter(opticalSize = 32f)
+
+    @OptIn(ExperimentalTextApi::class)
+    private fun inter(opticalSize: Float) = FontFamily(
+        listOf(FontWeight.Normal, FontWeight.Medium, FontWeight.SemiBold, FontWeight.Bold).map { weight ->
+            Font(
+                R.font.inter,
+                weight,
+                variationSettings = FontVariation.Settings(
+                    FontVariation.weight(weight.weight),
+                    FontVariation.Setting("opsz", opticalSize),
+                ),
+            )
+        },
+    )
 
     val Display = TextStyle(
-        fontFamily = Family, fontWeight = FontWeight.SemiBold,
+        fontFamily = DisplayFamily, fontWeight = FontWeight.SemiBold,
         fontSize = 44.sp, lineHeight = 50.sp, letterSpacing = (-0.6).sp,
     )
     val Title = TextStyle(
-        fontFamily = Family, fontWeight = FontWeight.SemiBold,
+        fontFamily = DisplayFamily, fontWeight = FontWeight.SemiBold,
         fontSize = 28.sp, lineHeight = 34.sp, letterSpacing = (-0.3).sp,
     )
     val Headline = TextStyle(

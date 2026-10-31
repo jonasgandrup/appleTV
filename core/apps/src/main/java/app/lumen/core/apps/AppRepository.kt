@@ -89,22 +89,24 @@ class AppRepository(context: Context, scope: CoroutineScope) {
 
     private fun load(info: ResolveInfo, isTv: Boolean): AppInfo {
         val activity = info.activityInfo
-        val icon = activity.loadIcon(pm).toBitmap(ICON_PX, ICON_PX)
-        val banner = if (isTv) activity.loadBanner(pm)?.toBitmap(BANNER_WIDTH_PX, BANNER_HEIGHT_PX) else null
+        val iconDrawable = activity.loadIcon(pm)
+        val icon = iconDrawable.toBitmap(ICON_PX, ICON_PX)
+        val accent = accentColor(icon)
+        val banner = if (isTv) activity.loadBanner(pm) else null
         return AppInfo(
             packageName = activity.packageName,
             activityName = activity.name,
             label = info.loadLabel(pm).toString().trim(),
-            banner = banner,
+            art = TileArt.render(banner, iconDrawable, accent, BANNER_WIDTH_PX, BANNER_HEIGHT_PX),
             icon = icon,
-            accentColor = accentColor(icon),
+            accentColor = accent,
             category = AppCategory.from(activity.applicationInfo.category),
             isTvApp = isTv,
         )
     }
 
     private companion object {
-        // Sized for a 1080p UI surface: large enough for the hero card, small enough
+        // Tile art is sized for a 1080p UI surface: large enough for the hero card, small enough
         // that ~50 apps stay well under the launcher's memory budget.
         const val BANNER_WIDTH_PX = 480
         const val BANNER_HEIGHT_PX = 270

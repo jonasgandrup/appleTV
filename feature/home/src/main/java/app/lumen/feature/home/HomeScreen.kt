@@ -109,7 +109,7 @@ fun HomeScreen(
 
         Backdrop(
             wallpaper = state.settings.wallpaper,
-            art = if (state.settings.ambientBackdrop) hero?.banner ?: hero?.icon else null,
+            art = if (state.settings.ambientBackdrop) hero?.art else null,
             dim = if (browsingBelow) 0.55f else 0f,
         )
 
