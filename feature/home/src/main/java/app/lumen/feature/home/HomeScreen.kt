@@ -3,12 +3,10 @@ package app.lumen.feature.home
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -26,7 +24,6 @@ import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
@@ -37,12 +34,10 @@ import app.lumen.core.designsystem.LumenColors
 import app.lumen.core.designsystem.LumenDimens
 import app.lumen.core.designsystem.LumenText
 import app.lumen.core.designsystem.LumenType
-import app.lumen.core.designsystem.PillButton
-import app.lumen.core.designsystem.SectionTitle
 import app.lumen.core.system.SystemActions
 import kotlinx.coroutines.flow.Flow
 
-/** Height of the Top Shelf row plus a peek of the section below it. */
+/** Height of the Top Shelf row plus a peek of the grid below it. */
 private val ShelfAreaHeight = 196.dp
 private val CollapsedHeroHeight = 76.dp
 
@@ -133,37 +128,23 @@ fun HomeScreen(
                         )
                     }
                 }
-                if (state.recents.isNotEmpty()) {
-                    item(key = "recents-title") { SectionTitle("Recently Used", Modifier.padding(horizontal = LumenDimens.SafeHorizontal)) }
-                    item(key = "recents") {
-                        AppRow(
-                            apps = state.recents,
-                            actions = actions,
-                            modifier = Modifier.onFocusChanged { if (it.hasFocus) browsingBelow = true },
-                        )
-                    }
-                }
-                item(key = "all-title") { SectionTitle("All Apps", Modifier.padding(horizontal = LumenDimens.SafeHorizontal)) }
-                itemsIndexed(state.allApps.chunked(LumenDimens.TilesPerRow), key = { i, _ -> "all-$i" }) { index, row ->
+                // One continuous grid below the shelf, ending with Settings, like tvOS.
+                val gridRows = (state.others.map(GridTile::App) + GridTile.Settings).chunked(LumenDimens.TilesPerRow)
+                itemsIndexed(gridRows, key = { i, _ -> "grid-$i" }) { index, row ->
                     AppGridRow(
-                        apps = row,
+                        tiles = row,
                         actions = actions,
+                        onOpenSettings = onOpenSettings,
                         firstTileFocus = if (index == 0 && state.favorites.isEmpty()) firstFocus else null,
+                        settingsFocus = if (index == gridRows.lastIndex) settingsFocus else null,
                         modifier = Modifier.onFocusChanged { if (it.hasFocus) browsingBelow = true },
                     )
                 }
             }
         }
 
-        Row(
-            modifier = Modifier
-                .align(Alignment.TopEnd)
-                .padding(top = LumenDimens.SafeVertical, end = LumenDimens.SafeHorizontal),
-            horizontalArrangement = Arrangement.spacedBy(20.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            PillButton("Settings", onClick = onOpenSettings, modifier = Modifier.focusRequester(settingsFocus))
-            if (state.settings.showClock) Clock()
+        if (state.settings.showClock) {
+            Clock(Modifier.align(Alignment.TopEnd).padding(top = LumenDimens.SafeVertical, end = LumenDimens.SafeHorizontal))
         }
 
         optionsFor?.let { app ->

@@ -12,8 +12,8 @@ Built with Kotlin and Jetpack Compose, designed for the D-pad remote first.
 |---|---|
 | **App discovery** | Finds every TV (leanback) app; non-TV phone apps can be turned on in Settings. Updates live when apps are installed or removed. |
 | **Top Shelf** | Pinned apps. Seeded on first run with popular streaming apps you have installed. |
-| **Featured area** | Shows the focused app's name, category and banner, and tints the backdrop with its colors. Collapses when you browse further down, like tvOS. |
-| **Recently Used** | The apps you last opened from Lumen. |
+| **Featured area** | Shows the focused app's name over a wash of its colors. Collapses when you browse further down, like tvOS. |
+| **App grid** | One continuous grid of everything else below the Top Shelf, ending with a Settings tile, like tvOS. Every tile shares one 16:9 frame: the app's banner, or a card built from its icon. |
 | **Remote control** | Every element is reachable with the D-pad. Select opens an app; **hold Select** for options (pin, reorder, hide, app info). Rows remember where you were. Home while on the home screen jumps back to the top. |
 | **Settings** | Wallpaper, ambient backdrop, clock, non-TV apps, hidden apps, Home-button behavior, a shortcut to Android Settings. |
 | **Wallpapers** | Six built-in gradients, or your own photos (pushed over ADB or imported with the system picker if your device has one). |
@@ -27,7 +27,7 @@ core/designsystem/    Colors, type, spacing, focus-aware components (AppTile, Me
 core/apps/            App discovery (PackageManager), icon/banner rasterizing, launching
 core/settings/        DataStore-backed preferences, wallpaper model and library
 core/system/          Home-button override (accessibility service), shortcuts into system screens
-feature/home/         Home screen: hero, Top Shelf, recents, all apps, app options dialog
+feature/home/         Home screen: hero, Top Shelf, app grid, app options dialog
 feature/settings/     Settings screen, wallpaper picker, hidden apps
 ```
 

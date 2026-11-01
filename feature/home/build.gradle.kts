@@ -23,6 +23,7 @@ dependencies {
     implementation(platform(libs.compose.bom))
     implementation(libs.bundles.compose)
     implementation(project(":core:apps"))
+    implementation(libs.androidx.core.ktx)
     implementation(project(":core:settings"))
     implementation(project(":core:system"))
     implementation(project(":core:designsystem"))

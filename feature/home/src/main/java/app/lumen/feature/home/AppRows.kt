@@ -1,5 +1,11 @@
 package app.lumen.feature.home
 
+import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.LinearGradient
+import android.graphics.Paint
+import android.graphics.Shader
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -14,8 +20,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.focusRestorer
+import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
 import app.lumen.core.apps.AppInfo
 import app.lumen.core.designsystem.AppTile
 import app.lumen.core.designsystem.LumenDimens
@@ -53,13 +62,21 @@ internal fun AppRow(
     }
 }
 
-/** One fixed row of the All Apps grid. */
+/** A tile in the home grid: an app, or the Settings tile that ends the grid, as on tvOS. */
+internal sealed interface GridTile {
+    data class App(val app: AppInfo) : GridTile
+    data object Settings : GridTile
+}
+
+/** One fixed row of the home grid. */
 @Composable
 internal fun AppGridRow(
-    apps: List<AppInfo>,
+    tiles: List<GridTile>,
     actions: TileActions,
+    onOpenSettings: () -> Unit,
     modifier: Modifier = Modifier,
     firstTileFocus: FocusRequester? = null,
+    settingsFocus: FocusRequester? = null,
 ) {
     Row(
         modifier = modifier
@@ -67,15 +84,45 @@ internal fun AppGridRow(
             .padding(horizontal = LumenDimens.SafeHorizontal, vertical = RowVerticalPadding),
         horizontalArrangement = Arrangement.spacedBy(LumenDimens.TileSpacing),
     ) {
-        apps.forEachIndexed { index, app ->
-            LauncherTile(
-                app = app,
-                actions = actions,
-                tileModifier = if (index == 0 && firstTileFocus != null) Modifier.focusRequester(firstTileFocus) else Modifier,
-            )
+        tiles.forEachIndexed { index, tile ->
+            val first = if (index == 0 && firstTileFocus != null) Modifier.focusRequester(firstTileFocus) else Modifier
+            when (tile) {
+                is GridTile.App -> LauncherTile(app = tile.app, actions = actions, tileModifier = first)
+                GridTile.Settings -> SettingsTile(
+                    onClick = onOpenSettings,
+                    tileModifier = if (settingsFocus != null) first.focusRequester(settingsFocus) else first,
+                )
+            }
         }
     }
 }
+
+@Composable
+private fun SettingsTile(onClick: () -> Unit, tileModifier: Modifier) {
+    val context = LocalContext.current
+    val art = remember { settingsArt(context) }
+    AppTile(label = "Settings", art = art, onClick = onClick, tileModifier = tileModifier)
+}
+
+/** A gear on the graphite gradient of tvOS's Settings icon, at the same size as app tile art. */
+private fun settingsArt(context: Context): ImageBitmap {
+    val bitmap = Bitmap.createBitmap(SETTINGS_ART_WIDTH, SETTINGS_ART_HEIGHT, Bitmap.Config.ARGB_8888)
+    val canvas = Canvas(bitmap)
+    val paint = Paint().apply {
+        shader = LinearGradient(0f, 0f, 0f, SETTINGS_ART_HEIGHT.toFloat(), 0xFF8E8E93.toInt(), 0xFF545458.toInt(), Shader.TileMode.CLAMP)
+    }
+    canvas.drawRect(0f, 0f, SETTINGS_ART_WIDTH.toFloat(), SETTINGS_ART_HEIGHT.toFloat(), paint)
+    val gear = checkNotNull(ContextCompat.getDrawable(context, R.drawable.ic_settings_gear))
+    val size = SETTINGS_ART_HEIGHT / 2
+    val left = (SETTINGS_ART_WIDTH - size) / 2
+    val top = (SETTINGS_ART_HEIGHT - size) / 2
+    gear.setBounds(left, top, left + size, top + size)
+    gear.draw(canvas)
+    return bitmap.asImageBitmap()
+}
+
+private const val SETTINGS_ART_WIDTH = 480
+private const val SETTINGS_ART_HEIGHT = 270
 
 @Composable
 private fun LauncherTile(app: AppInfo, actions: TileActions, tileModifier: Modifier) {

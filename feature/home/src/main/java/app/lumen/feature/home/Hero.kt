@@ -13,15 +13,9 @@ import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -29,8 +23,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.BlurredEdgeTreatment
 import androidx.compose.ui.draw.blur
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.FilterQuality
@@ -46,7 +38,7 @@ import app.lumen.core.designsystem.LumenType
 import app.lumen.core.designsystem.WallpaperBackground
 import app.lumen.core.settings.Wallpaper
 
-/** The cinematic area above the Top Shelf, describing whichever app has focus. */
+/** The cinematic area above the Top Shelf, naming whichever app has focus. */
 @Composable
 internal fun Hero(app: AppInfo?, visible: Boolean, modifier: Modifier = Modifier) {
     val alpha by animateFloatAsState(if (visible) 1f else 0f, tween(if (visible) 450 else 200), label = "heroAlpha")
@@ -64,39 +56,17 @@ internal fun Hero(app: AppInfo?, visible: Boolean, modifier: Modifier = Modifier
     }
 }
 
+/** Just the app's name over the ambient wash; the tile below already shows its artwork. */
 @Composable
 private fun HeroContent(app: AppInfo) {
     Box(
         Modifier
             .fillMaxSize()
             .padding(horizontal = LumenDimens.SafeHorizontal)
-            .padding(bottom = 6.dp),
+            .padding(bottom = 10.dp),
     ) {
-        Column(Modifier.align(Alignment.BottomStart).fillMaxWidth(0.52f)) {
-            LumenText(app.category.displayName.uppercase(), LumenType.Overline, color = LumenColors.TextSecondary)
-            Spacer(Modifier.height(8.dp))
-            LumenText(app.label, LumenType.Display, maxLines = 2)
-            Spacer(Modifier.height(10.dp))
-            LumenText("Press select to open  ·  Hold for options", LumenType.Body, color = LumenColors.TextTertiary)
-        }
-        HeroArt(app, Modifier.align(Alignment.BottomEnd).width(320.dp))
+        LumenText(app.label, LumenType.Display, modifier = Modifier.align(Alignment.BottomStart).fillMaxWidth(0.6f), maxLines = 1)
     }
-}
-
-@Composable
-private fun HeroArt(app: AppInfo, modifier: Modifier) {
-    val art = remember(app.art) { app.art.asImageBitmap() }
-    val shape = RoundedCornerShape(18.dp)
-    Image(
-        art,
-        app.label,
-        modifier
-            .aspectRatio(16f / 9f)
-            .shadow(36.dp, shape, ambientColor = Color.Black, spotColor = Color.Black)
-            .clip(shape),
-        contentScale = ContentScale.Crop,
-        filterQuality = FilterQuality.High,
-    )
 }
 
 /**
@@ -144,7 +114,26 @@ private fun AmbientArt(art: Bitmap?) {
     }
 }
 
+/**
+ * Shrinks the art to a handful of color patches and darkens them, so the backdrop is a deep wash
+ * of the app's colors rather than a recognizable blurred logo, and white banners don't turn the
+ * whole screen light gray.
+ */
 private fun shrink(source: Bitmap): Bitmap {
-    val mid = Bitmap.createScaledBitmap(source, 96, 54, true)
-    return Bitmap.createScaledBitmap(mid, 24, 14, true)
+    val mid = Bitmap.createScaledBitmap(source, 48, 27, true)
+    val small = Bitmap.createScaledBitmap(mid, AMBIENT_WIDTH, AMBIENT_HEIGHT, true).copy(Bitmap.Config.ARGB_8888, true)
+    val hsv = FloatArray(3)
+    for (y in 0 until AMBIENT_HEIGHT) {
+        for (x in 0 until AMBIENT_WIDTH) {
+            android.graphics.Color.colorToHSV(small.getPixel(x, y), hsv)
+            hsv[2] = hsv[2] * AMBIENT_MAX_BRIGHTNESS
+            small.setPixel(x, y, android.graphics.Color.HSVToColor(hsv))
+        }
+    }
+    return small
 }
+
+private const val AMBIENT_WIDTH = 8
+private const val AMBIENT_HEIGHT = 5
+/** Caps the wash's brightness so white text over it stays crisp. */
+private const val AMBIENT_MAX_BRIGHTNESS = 0.4f

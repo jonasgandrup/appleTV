@@ -21,8 +21,9 @@ import kotlinx.coroutines.launch
 data class HomeUiState(
     val loading: Boolean = true,
     val favorites: List<AppInfo> = emptyList(),
-    val recents: List<AppInfo> = emptyList(),
     val allApps: List<AppInfo> = emptyList(),
+    /** Everything not pinned to the Top Shelf, for the grid below it. */
+    val others: List<AppInfo> = emptyList(),
     val settings: LauncherSettings = LauncherSettings(),
 )
 
@@ -33,14 +34,18 @@ class HomeViewModel(
 ) : ViewModel() {
 
     val state: StateFlow<HomeUiState> = combine(apps.apps, settings.settings) { list, prefs ->
-        if (list == null) return@combine HomeUiState(loading = true, settings = prefs)
-        val visible = list.filter { (it.isTvApp || prefs.showPhoneApps) && it.packageName !in prefs.hidden }
+        // Wait for first-run seeding too, so initial focus lands on the Top Shelf, not the grid.
+        if (list == null || !prefs.favoritesInitialized) return@combine HomeUiState(loading = true, settings = prefs)
+        val visible = list.filter {
+            (it.isTvApp || prefs.showPhoneApps) && it.packageName !in prefs.hidden && it.packageName != ANDROID_SETTINGS_PACKAGE
+        }
         val byPackage = visible.associateBy { it.packageName }
+        val favorites = prefs.favorites.mapNotNull(byPackage::get)
         HomeUiState(
             loading = false,
-            favorites = prefs.favorites.mapNotNull(byPackage::get),
-            recents = prefs.recents.mapNotNull(byPackage::get).take(MAX_RECENTS_SHOWN),
+            favorites = favorites,
             allApps = visible,
+            others = visible - favorites.toSet(),
             settings = prefs,
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), HomeUiState())
@@ -60,15 +65,17 @@ class HomeViewModel(
     /** On first run, pin the popular streaming apps that are installed, topped up to a full row. */
     private fun seedFavorites() = viewModelScope.launch {
         if (settings.settings.first().favoritesInitialized) return@launch
-        val tvApps = apps.apps.filterNotNull().first().filter { it.isTvApp }
+        val tvApps = apps.apps.filterNotNull().first().filter { it.isTvApp && it.packageName != ANDROID_SETTINGS_PACKAGE }
         val preferred = PREFERRED_PACKAGES.mapNotNull { pkg -> tvApps.find { it.packageName == pkg } }
         val seed = (preferred + tvApps).distinct().take(SEED_COUNT).map { it.packageName }
         settings.initializeFavorites(seed)
     }
 
     companion object {
-        private const val MAX_RECENTS_SHOWN = 8
         private const val SEED_COUNT = 6
+
+        /** Left off the home screen: the Settings tile ends the grid, and Lumen's Settings links to it. */
+        private const val ANDROID_SETTINGS_PACKAGE = "com.android.tv.settings"
 
         private val PREFERRED_PACKAGES = listOf(
             "com.google.android.youtube.tv",
