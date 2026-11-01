@@ -1,5 +1,6 @@
 package app.lumen.feature.home
 
+import android.os.Bundle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
@@ -10,6 +11,7 @@ import app.lumen.core.apps.AppLauncher
 import app.lumen.core.apps.AppRepository
 import app.lumen.core.settings.LauncherSettings
 import app.lumen.core.settings.SettingsRepository
+import app.lumen.core.settings.WallpaperLibrary
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
@@ -31,6 +33,7 @@ class HomeViewModel(
     private val apps: AppRepository,
     private val launcher: AppLauncher,
     private val settings: SettingsRepository,
+    private val wallpapers: WallpaperLibrary,
 ) : ViewModel() {
 
     val state: StateFlow<HomeUiState> = combine(apps.apps, settings.settings) { list, prefs ->
@@ -54,9 +57,12 @@ class HomeViewModel(
         seedFavorites()
     }
 
-    fun launch(app: AppInfo) {
-        if (launcher.launch(app)) viewModelScope.launch { settings.recordLaunch(app.packageName) }
+    fun launch(app: AppInfo, options: Bundle? = null) {
+        if (launcher.launch(app, options)) viewModelScope.launch { settings.recordLaunch(app.packageName) }
     }
+
+    /** The user's wallpaper photos, which the screensaver prefers over the built-in gradients. */
+    suspend fun screensaverPhotos(): List<String> = wallpapers.list().map { it.path }
 
     fun toggleFavorite(app: AppInfo) = viewModelScope.launch { settings.toggleFavorite(app.packageName) }
     fun moveFavorite(app: AppInfo, offset: Int) = viewModelScope.launch { settings.moveFavorite(app.packageName, offset) }
@@ -89,7 +95,12 @@ class HomeViewModel(
             "com.google.android.youtube.tvmusic",
         )
 
-        fun factory(apps: AppRepository, launcher: AppLauncher, settings: SettingsRepository): ViewModelProvider.Factory =
-            viewModelFactory { initializer { HomeViewModel(apps, launcher, settings) } }
+        fun factory(
+            apps: AppRepository,
+            launcher: AppLauncher,
+            settings: SettingsRepository,
+            wallpapers: WallpaperLibrary,
+        ): ViewModelProvider.Factory =
+            viewModelFactory { initializer { HomeViewModel(apps, launcher, settings, wallpapers) } }
     }
 }

@@ -54,6 +54,8 @@ class SettingsViewModel(
     fun setShowClock(enabled: Boolean) = viewModelScope.launch { settingsRepository.setShowClock(enabled) }
     fun setShowPhoneApps(enabled: Boolean) = viewModelScope.launch { settingsRepository.setShowPhoneApps(enabled) }
     fun setHomeOverride(enabled: Boolean) = viewModelScope.launch { settingsRepository.setHomeOverride(enabled) }
+    fun setNavigationSounds(enabled: Boolean) = viewModelScope.launch { settingsRepository.setNavigationSounds(enabled) }
+    fun setScreensaverMinutes(minutes: Int) = viewModelScope.launch { settingsRepository.setScreensaverMinutes(minutes) }
     fun unhide(app: AppInfo) = viewModelScope.launch { settingsRepository.setHidden(app.packageName, false) }
 
     companion object {

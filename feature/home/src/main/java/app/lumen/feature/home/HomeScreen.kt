@@ -95,72 +95,79 @@ fun HomeScreen(
         if (!browsingBelow) listState.animateScrollToItem(0)
     }
 
-    BoxWithConstraints(Modifier.fillMaxSize()) {
-        val heroHeight by animateDpAsState(
-            targetValue = if (browsingBelow) CollapsedHeroHeight else maxHeight - ShelfAreaHeight,
-            animationSpec = tween(500, easing = FastOutSlowInEasing),
-            label = "heroHeight",
-        )
+    ScreensaverHost(
+        timeoutMinutes = state.settings.screensaverMinutes,
+        wallpaper = state.settings.wallpaper,
+        loadPhotos = viewModel::screensaverPhotos,
+        wake = homePresses,
+    ) {
+        BoxWithConstraints(Modifier.fillMaxSize()) {
+            val heroHeight by animateDpAsState(
+                targetValue = if (browsingBelow) CollapsedHeroHeight else maxHeight - ShelfAreaHeight,
+                animationSpec = tween(500, easing = FastOutSlowInEasing),
+                label = "heroHeight",
+            )
 
-        Backdrop(
-            wallpaper = state.settings.wallpaper,
-            art = if (state.settings.ambientBackdrop) hero?.art else null,
-            dim = if (browsingBelow) 0.55f else 0f,
-        )
+            Backdrop(
+                wallpaper = state.settings.wallpaper,
+                art = if (state.settings.ambientBackdrop) hero?.art else null,
+                dim = if (browsingBelow) 0.55f else 0f,
+            )
 
-        Column(Modifier.fillMaxSize()) {
-            Hero(app = hero, visible = !browsingBelow, modifier = Modifier.fillMaxWidth().height(heroHeight))
+            Column(Modifier.fillMaxSize()) {
+                Hero(app = hero, visible = !browsingBelow, modifier = Modifier.fillMaxWidth().height(heroHeight))
 
-            LazyColumn(
-                state = listState,
-                modifier = Modifier.weight(1f).fillMaxWidth(),
-                contentPadding = PaddingValues(bottom = 48.dp),
-            ) {
-                item(key = "shelf") {
-                    if (state.favorites.isEmpty()) {
-                        EmptyShelf()
-                    } else {
-                        AppRow(
-                            apps = state.favorites,
+                LazyColumn(
+                    state = listState,
+                    modifier = Modifier.weight(1f).fillMaxWidth(),
+                    contentPadding = PaddingValues(bottom = 48.dp),
+                ) {
+                    item(key = "shelf") {
+                        if (state.favorites.isEmpty()) {
+                            EmptyShelf()
+                        } else {
+                            AppRow(
+                                apps = state.favorites,
+                                actions = actions,
+                                firstTileFocus = firstFocus,
+                                modifier = Modifier.onFocusChanged { if (it.hasFocus) browsingBelow = false },
+                            )
+                        }
+                    }
+                    // One continuous grid below the shelf, ending with Settings, like tvOS.
+                    val gridRows = (state.others.map(GridTile::App) + GridTile.Settings).chunked(LumenDimens.TilesPerRow)
+                    itemsIndexed(gridRows, key = { i, _ -> "grid-$i" }) { index, row ->
+                        AppGridRow(
+                            tiles = row,
                             actions = actions,
-                            firstTileFocus = firstFocus,
-                            modifier = Modifier.onFocusChanged { if (it.hasFocus) browsingBelow = false },
+                            onOpenSettings = onOpenSettings,
+                            firstTileFocus = if (index == 0 && state.favorites.isEmpty()) firstFocus else null,
+                            settingsFocus = if (index == gridRows.lastIndex) settingsFocus else null,
+                            modifier = Modifier.onFocusChanged { if (it.hasFocus) browsingBelow = true },
                         )
                     }
                 }
-                // One continuous grid below the shelf, ending with Settings, like tvOS.
-                val gridRows = (state.others.map(GridTile::App) + GridTile.Settings).chunked(LumenDimens.TilesPerRow)
-                itemsIndexed(gridRows, key = { i, _ -> "grid-$i" }) { index, row ->
-                    AppGridRow(
-                        tiles = row,
-                        actions = actions,
-                        onOpenSettings = onOpenSettings,
-                        firstTileFocus = if (index == 0 && state.favorites.isEmpty()) firstFocus else null,
-                        settingsFocus = if (index == gridRows.lastIndex) settingsFocus else null,
-                        modifier = Modifier.onFocusChanged { if (it.hasFocus) browsingBelow = true },
-                    )
-                }
             }
-        }
 
-        if (state.settings.showClock) {
-            Clock(Modifier.align(Alignment.TopEnd).padding(top = LumenDimens.SafeVertical, end = LumenDimens.SafeHorizontal))
-        }
+            if (state.settings.showClock) {
+                Clock(Modifier.align(Alignment.TopEnd).padding(top = LumenDimens.SafeVertical, end = LumenDimens.SafeHorizontal))
+            }
 
-        optionsFor?.let { app ->
-            AppOptionsDialog(
-                app = app,
-                favoriteIndex = state.favorites.indexOfFirst { it.packageName == app.packageName },
-                favoriteCount = state.favorites.size,
-                onDismiss = { optionsFor = null },
-                options = AppOptions(
-                    onOpen = { viewModel.launch(app) },
-                    onToggleFavorite = { viewModel.toggleFavorite(app) },
-                    onMove = { viewModel.moveFavorite(app, it) },
-                    onHide = { viewModel.hide(app) },
-                    onAppInfo = { SystemActions.openAppInfo(context, app.packageName) },
-                ),
-            )
+            optionsFor?.let { app ->
+                AppOptionsDialog(
+                    app = app,
+                    favoriteIndex = state.favorites.indexOfFirst { it.packageName == app.packageName },
+                    favoriteCount = state.favorites.size,
+                    onDismiss = { optionsFor = null },
+                    options = AppOptions(
+                        onOpen = { viewModel.launch(app) },
+                        onToggleFavorite = { viewModel.toggleFavorite(app) },
+                        onMove = { viewModel.moveFavorite(app, it) },
+                        onHide = { viewModel.hide(app) },
+                        onAppInfo = { SystemActions.openAppInfo(context, app.packageName) },
+                    ),
+                )
+            }
         }
     }
 }

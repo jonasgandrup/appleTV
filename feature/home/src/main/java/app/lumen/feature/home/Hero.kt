@@ -1,7 +1,6 @@
 package app.lumen.feature.home
 
 import android.graphics.Bitmap
-import android.os.Build
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.animateFloatAsState
@@ -21,8 +20,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.BlurredEdgeTreatment
-import androidx.compose.ui.draw.blur
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.FilterQuality
@@ -95,9 +92,9 @@ internal fun Backdrop(wallpaper: Wallpaper, art: Bitmap?, dim: Float) {
 
 @Composable
 private fun AmbientArt(art: Bitmap?) {
-    // Upscaling a tiny bitmap with bilinear filtering is a nearly free blur that works on every
-    // API level; on Android 12+ a real blur pass smooths out the remaining banding.
-    val ambient = remember(art) { art?.let(::shrink)?.asImageBitmap() }
+    // The wash is pre-blurred on the CPU once per app, so drawing it is just a stretched bitmap:
+    // a live full-screen blur is too heavy for the Chromecast's GPU while tiles animate.
+    val ambient = remember(art) { art?.let(::ambientWash)?.asImageBitmap() }
     Crossfade(targetState = ambient, animationSpec = tween(700), label = "ambient") { image ->
         if (image != null) {
             Image(
@@ -105,7 +102,6 @@ private fun AmbientArt(art: Bitmap?) {
                 contentDescription = null,
                 modifier = Modifier
                     .fillMaxSize()
-                    .then(if (Build.VERSION.SDK_INT >= 31) Modifier.blur(32.dp, BlurredEdgeTreatment.Rectangle) else Modifier)
                     .graphicsLayer { alpha = 0.8f },
                 contentScale = ContentScale.Crop,
                 filterQuality = FilterQuality.High,
@@ -115,25 +111,55 @@ private fun AmbientArt(art: Bitmap?) {
 }
 
 /**
- * Shrinks the art to a handful of color patches and darkens them, so the backdrop is a deep wash
- * of the app's colors rather than a recognizable blurred logo, and white banners don't turn the
- * whole screen light gray.
+ * Reduces the art to a handful of darkened color patches, then blurs them smooth. The backdrop
+ * becomes a deep wash of the app's colors rather than a recognizable blurred logo, and white
+ * banners don't turn the whole screen light gray.
  */
-private fun shrink(source: Bitmap): Bitmap {
+private fun ambientWash(source: Bitmap): Bitmap {
     val mid = Bitmap.createScaledBitmap(source, 48, 27, true)
-    val small = Bitmap.createScaledBitmap(mid, AMBIENT_WIDTH, AMBIENT_HEIGHT, true).copy(Bitmap.Config.ARGB_8888, true)
+    val patches = Bitmap.createScaledBitmap(mid, PATCHES_WIDTH, PATCHES_HEIGHT, true).copy(Bitmap.Config.ARGB_8888, true)
     val hsv = FloatArray(3)
-    for (y in 0 until AMBIENT_HEIGHT) {
-        for (x in 0 until AMBIENT_WIDTH) {
-            android.graphics.Color.colorToHSV(small.getPixel(x, y), hsv)
+    for (y in 0 until PATCHES_HEIGHT) {
+        for (x in 0 until PATCHES_WIDTH) {
+            android.graphics.Color.colorToHSV(patches.getPixel(x, y), hsv)
             hsv[2] = hsv[2] * AMBIENT_MAX_BRIGHTNESS
-            small.setPixel(x, y, android.graphics.Color.HSVToColor(hsv))
+            patches.setPixel(x, y, android.graphics.Color.HSVToColor(hsv))
         }
     }
-    return small
+    val wash = Bitmap.createScaledBitmap(patches, WASH_WIDTH, WASH_HEIGHT, true)
+    val pixels = IntArray(WASH_WIDTH * WASH_HEIGHT).also { wash.getPixels(it, 0, WASH_WIDTH, 0, 0, WASH_WIDTH, WASH_HEIGHT) }
+    repeat(3) { boxBlur(pixels, WASH_WIDTH, WASH_HEIGHT, BLUR_RADIUS) }
+    return Bitmap.createBitmap(pixels, WASH_WIDTH, WASH_HEIGHT, Bitmap.Config.ARGB_8888)
 }
 
-private const val AMBIENT_WIDTH = 8
-private const val AMBIENT_HEIGHT = 5
+/** One separable box-blur pass, in place; three passes approximate a Gaussian. */
+private fun boxBlur(pixels: IntArray, width: Int, height: Int, radius: Int) {
+    val out = IntArray(pixels.size)
+    fun pass(src: IntArray, dst: IntArray, length: Int, lines: Int, step: Int, lineStep: Int) {
+        for (line in 0 until lines) {
+            for (i in 0 until length) {
+                var r = 0
+                var g = 0
+                var b = 0
+                for (k in -radius..radius) {
+                    val c = src[line * lineStep + i.plus(k).coerceIn(0, length - 1) * step]
+                    r += (c shr 16) and 0xFF
+                    g += (c shr 8) and 0xFF
+                    b += c and 0xFF
+                }
+                val n = 2 * radius + 1
+                dst[line * lineStep + i * step] = (0xFF shl 24) or ((r / n) shl 16) or ((g / n) shl 8) or (b / n)
+            }
+        }
+    }
+    pass(pixels, out, width, height, step = 1, lineStep = width)
+    pass(out, pixels, height, width, step = width, lineStep = 1)
+}
+
+private const val PATCHES_WIDTH = 8
+private const val PATCHES_HEIGHT = 5
+private const val WASH_WIDTH = 64
+private const val WASH_HEIGHT = 36
+private const val BLUR_RADIUS = 4
 /** Caps the wash's brightness so white text over it stays crisp. */
 private const val AMBIENT_MAX_BRIGHTNESS = 0.4f

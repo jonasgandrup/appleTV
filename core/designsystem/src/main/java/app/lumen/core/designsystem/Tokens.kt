@@ -47,7 +47,7 @@ object LumenType {
 
     @OptIn(ExperimentalTextApi::class)
     private fun inter(opticalSize: Float) = FontFamily(
-        listOf(FontWeight.Normal, FontWeight.Medium, FontWeight.SemiBold, FontWeight.Bold).map { weight ->
+        listOf(FontWeight.Light, FontWeight.Normal, FontWeight.Medium, FontWeight.SemiBold, FontWeight.Bold).map { weight ->
             Font(
                 R.font.inter,
                 weight,

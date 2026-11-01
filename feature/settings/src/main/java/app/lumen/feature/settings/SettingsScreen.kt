@@ -128,6 +128,12 @@ private fun rememberInitialFocus(): FocusRequester {
 
 private fun onOff(value: Boolean) = if (value) "On" else "Off"
 
+/** Select cycles through these, in minutes; 0 is Off. */
+private val ScreensaverDelays = listOf(2, 5, 10, 15, 0)
+
+private fun nextScreensaverDelay(current: Int): Int =
+    ScreensaverDelays[(ScreensaverDelays.indexOf(current) + 1).mod(ScreensaverDelays.size)]
+
 @Composable
 private fun MainPage(settings: LauncherSettings, viewModel: SettingsViewModel, onNavigate: (SettingsPage) -> Unit) {
     val context = LocalContext.current
@@ -165,6 +171,22 @@ private fun MainPage(settings: LauncherSettings, viewModel: SettingsViewModel, o
             )
         }
         item { MenuRow("Clock", { viewModel.setShowClock(!settings.showClock) }, value = onOff(settings.showClock)) }
+        item {
+            MenuRow(
+                title = "Screensaver",
+                subtitle = "Slowly drifting wallpaper and a clock when the home screen sits idle. Uses your photos if you've added any.",
+                value = if (settings.screensaverMinutes == 0) "Off" else "After ${settings.screensaverMinutes} min",
+                onClick = { viewModel.setScreensaverMinutes(nextScreensaverDelay(settings.screensaverMinutes)) },
+            )
+        }
+        item {
+            MenuRow(
+                title = "Navigation Sounds",
+                subtitle = "A soft click as you move around and select",
+                value = onOff(settings.navigationSounds),
+                onClick = { viewModel.setNavigationSounds(!settings.navigationSounds) },
+            )
+        }
 
         item { SectionTitle("Apps") }
         item {

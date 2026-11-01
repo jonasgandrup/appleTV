@@ -1,11 +1,13 @@
 package app.lumen.feature.home
 
+import android.app.ActivityOptions
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.LinearGradient
 import android.graphics.Paint
 import android.graphics.Shader
+import android.os.Bundle
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -20,9 +22,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.focusRestorer
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import app.lumen.core.apps.AppInfo
@@ -33,7 +39,8 @@ import app.lumen.core.designsystem.LumenDimens
 private val RowVerticalPadding = 16.dp
 
 internal class TileActions(
-    val onLaunch: (AppInfo) -> Unit,
+    /** Opens the app; the bundle carries the zoom-from-tile launch animation. */
+    val onLaunch: (AppInfo, Bundle?) -> Unit,
     val onOptions: (AppInfo) -> Unit,
     val onFocused: (AppInfo) -> Unit,
 )
@@ -127,12 +134,20 @@ private const val SETTINGS_ART_HEIGHT = 270
 @Composable
 private fun LauncherTile(app: AppInfo, actions: TileActions, tileModifier: Modifier) {
     val art = remember(app.art) { app.art.asImageBitmap() }
+    val view = LocalView.current
+    // Written on every layout pass, read only on click, so it's a plain holder, not state.
+    val bounds = remember { arrayOf(Rect.Zero) }
     AppTile(
         label = app.label,
         art = art,
-        onClick = { actions.onLaunch(app) },
+        onClick = {
+            val r = bounds[0]
+            // The app's window grows out of the tile, as on tvOS.
+            val zoom = ActivityOptions.makeScaleUpAnimation(view, r.left.toInt(), r.top.toInt(), r.width.toInt(), r.height.toInt())
+            actions.onLaunch(app, zoom.toBundle())
+        },
         onLongClick = { actions.onOptions(app) },
         onFocused = { actions.onFocused(app) },
-        tileModifier = tileModifier,
+        tileModifier = tileModifier.onGloballyPositioned { bounds[0] = it.boundsInRoot() },
     )
 }

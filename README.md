@@ -14,8 +14,10 @@ Built with Kotlin and Jetpack Compose, designed for the D-pad remote first.
 | **Top Shelf** | Pinned apps. Seeded on first run with popular streaming apps you have installed. |
 | **Featured area** | Shows the focused app's name over a wash of its colors. Collapses when you browse further down, like tvOS. |
 | **App grid** | One continuous grid of everything else below the Top Shelf, ending with a Settings tile, like tvOS. Every tile shares one 16:9 frame: the app's banner, or a card built from its icon. |
+| **Motion & sound** | Tiles lift, catch a sweep of light and lean into D-pad presses; apps zoom open out of their tile. Soft navigation clicks, which can be turned off. |
+| **Screensaver** | After a few idle minutes on the home screen: slowly drifting wallpaper (your photos, or the gradients) with a large clock that changes sides to protect OLED panels. |
 | **Remote control** | Every element is reachable with the D-pad. Select opens an app; **hold Select** for options (pin, reorder, hide, app info). Rows remember where you were. Home while on the home screen jumps back to the top. |
-| **Settings** | Wallpaper, ambient backdrop, clock, non-TV apps, hidden apps, Home-button behavior, a shortcut to Android Settings. |
+| **Settings** | Wallpaper, ambient backdrop, clock, screensaver, navigation sounds, non-TV apps, hidden apps, Home-button behavior, a shortcut to Android Settings. |
 | **Wallpapers** | Six built-in gradients, or your own photos (pushed over ADB or imported with the system picker if your device has one). |
 | **Home integration** | Registered as a HOME app, plus an optional accessibility service that makes the remote's Home button open Lumen on Google TV. See [docs/HOME_BUTTON.md](docs/HOME_BUTTON.md). |
 
@@ -54,13 +56,14 @@ Or open the project in Android Studio, which writes `local.properties` for you.
 ## Build the APK
 
 ```sh
-./gradlew assembleDebug
+./gradlew assembleRelease
 ```
 
-The APK is written to `app/build/outputs/apk/debug/app-debug.apk`.
+The APK is written to `app/build/outputs/apk/release/app-release.apk`. Install this one on the TV:
+it's optimized with R8 and is much smoother on the Chromecast than a debug build. It's signed with
+the debug key for easy sideloading; use your own signing config before sharing the APK with anyone.
 
-`./gradlew assembleRelease` also works and is signed with the debug key for easy sideloading.
-Use your own signing config before sharing the APK with anyone.
+`./gradlew assembleDebug` builds `app/build/outputs/apk/debug/app-debug.apk` for development.
 
 ## Install on the Chromecast over Wi-Fi
 
@@ -79,7 +82,7 @@ Use your own signing config before sharing the APK with anyone.
    `adb devices`; it should say `device`, not `unauthorized`.
 5. **Install and open:**
    ```sh
-   adb install -r app/build/outputs/apk/debug/app-debug.apk
+   adb install -r app/build/outputs/apk/release/app-release.apk
    adb shell am start -n app.lumen.launcher/.MainActivity
    ```
    Lumen also appears in the Google TV apps list.

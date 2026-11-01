@@ -9,10 +9,12 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onKeyEvent
+import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.pointerInput
 
@@ -22,14 +24,16 @@ import androidx.compose.ui.input.pointer.pointerInput
  * Holding select fires [onLongClick] once the key starts repeating (~0.5 s). A key-up only
  * counts as a click if this element also saw the key-down, so releasing select after a
  * long-press opened a dialog doesn't activate whatever the dialog focused first.
- * Taps work too, for testing in the emulator with a mouse.
+ * Taps work too, for testing in the emulator with a mouse. Plays [LocalUiSounds] when focus
+ * arrives from a D-pad press and on select.
  */
 fun Modifier.tvClickable(
     onLongClick: (() -> Unit)? = null,
     onClick: () -> Unit,
 ): Modifier = composed {
-    val click by rememberUpdatedState(onClick)
-    val longClick by rememberUpdatedState(onLongClick)
+    val sounds = LocalUiSounds.current
+    val click by rememberUpdatedState({ sounds?.select(); onClick() })
+    val longClick by rememberUpdatedState(onLongClick?.let { { sounds?.select(); it() } })
     var pressed by remember { mutableStateOf(false) }
     var longPressed by remember { mutableStateOf(false) }
 
@@ -39,6 +43,10 @@ fun Modifier.tvClickable(
                 onTap = { click() },
                 onLongPress = { longClick?.invoke() },
             )
+        }
+        .onPreviewKeyEvent { event ->
+            if (event.type == KeyEventType.KeyDown && event.key in DirectionKeys) sounds?.onDirectionPressed()
+            false
         }
         .onKeyEvent { event ->
             if (event.key != Key.DirectionCenter && event.key != Key.Enter && event.key != Key.NumPadEnter) {
@@ -66,5 +74,8 @@ fun Modifier.tvClickable(
                 else -> false
             }
         }
+        .onFocusChanged { if (it.isFocused) sounds?.onFocusMoved() }
         .focusable()
 }
+
+private val DirectionKeys = setOf(Key.DirectionLeft, Key.DirectionRight, Key.DirectionUp, Key.DirectionDown)

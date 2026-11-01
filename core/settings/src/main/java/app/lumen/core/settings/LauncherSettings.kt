@@ -15,6 +15,10 @@ data class LauncherSettings(
     val showPhoneApps: Boolean = false,
     /** Redirect the stock Google TV home to Lumen (needs the accessibility service). */
     val homeOverride: Boolean = true,
+    /** Soft ticks when moving focus and selecting, like tvOS. */
+    val navigationSounds: Boolean = true,
+    /** Minutes idle on the home screen before the screensaver starts; 0 turns it off. */
+    val screensaverMinutes: Int = 5,
 )
 
 enum class GradientPreset(val displayName: String, val stops: List<Long>, val glow: Long) {

@@ -4,6 +4,7 @@ import android.app.Application
 import android.content.Context
 import app.lumen.core.apps.AppLauncher
 import app.lumen.core.apps.AppRepository
+import app.lumen.core.designsystem.UiSounds
 import app.lumen.core.settings.SettingsRepository
 import app.lumen.core.settings.WallpaperLibrary
 import kotlinx.coroutines.CoroutineScope
@@ -29,4 +30,5 @@ class AppContainer(context: Context) {
     val apps = AppRepository(context, scope)
     val launcher = AppLauncher(context)
     val wallpapers = WallpaperLibrary(context)
+    val sounds by lazy { UiSounds(context) }
 }

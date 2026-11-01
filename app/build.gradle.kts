@@ -18,7 +18,10 @@ android {
 
     buildTypes {
         release {
-            isMinifyEnabled = false
+            // R8 makes Compose noticeably smoother on the Chromecast's modest CPU.
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"))
             // Sideloaded builds are signed with the debug key so `assembleRelease` installs out of the box.
             // Replace with your own signing config before distributing.
             signingConfig = signingConfigs.getByName("debug")
@@ -48,5 +51,6 @@ dependencies {
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.lifecycle.viewmodel.compose)
+    implementation(libs.androidx.lifecycle.runtime.compose)
     implementation(libs.kotlinx.coroutines.android)
 }

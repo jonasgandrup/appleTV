@@ -269,31 +269,6 @@ fun MenuRow(
     }
 }
 
-/** A small rounded button for secondary actions, e.g. the Settings entry on the home screen. */
-@Composable
-fun PillButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
-    var focused by remember { mutableStateOf(false) }
-    val background by animateColorAsState(if (focused) LumenColors.Focused else LumenColors.Surface, tween(160), label = "pillBg")
-    val content by animateColorAsState(if (focused) LumenColors.OnFocused else LumenColors.TextSecondary, tween(160), label = "pillFg")
-    val scale by animateFloatAsState(if (focused) 1.08f else 1f, spring(dampingRatio = 0.7f), label = "pillScale")
-    val shape = RoundedCornerShape(50)
-
-    Box(
-        modifier = modifier
-            .onFocusChanged { focused = it.isFocused }
-            .tvClickable(onClick = onClick)
-            .graphicsLayer {
-                scaleX = scale
-                scaleY = scale
-            }
-            .clip(shape)
-            .background(background)
-            .padding(horizontal = 16.dp, vertical = 7.dp),
-    ) {
-        LumenText(text, LumenType.Caption, color = content)
-    }
-}
-
 @Composable
 fun Clock(modifier: Modifier = Modifier) {
     val context = LocalContext.current

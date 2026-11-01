@@ -7,6 +7,7 @@ import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.emptyPreferences
+import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
@@ -65,6 +66,8 @@ class SettingsRepository(context: Context) {
     suspend fun setShowClock(enabled: Boolean) = set(Keys.ShowClock, enabled)
     suspend fun setShowPhoneApps(enabled: Boolean) = set(Keys.ShowPhoneApps, enabled)
     suspend fun setHomeOverride(enabled: Boolean) = set(Keys.HomeOverride, enabled)
+    suspend fun setNavigationSounds(enabled: Boolean) = set(Keys.NavigationSounds, enabled)
+    suspend fun setScreensaverMinutes(minutes: Int) = set(Keys.ScreensaverMinutes, minutes)
 
     private suspend fun <T> set(key: Preferences.Key<T>, value: T) {
         store.edit { it[key] = value }
@@ -89,6 +92,8 @@ class SettingsRepository(context: Context) {
             showClock = this[Keys.ShowClock] ?: defaults.showClock,
             showPhoneApps = this[Keys.ShowPhoneApps] ?: defaults.showPhoneApps,
             homeOverride = this[Keys.HomeOverride] ?: defaults.homeOverride,
+            navigationSounds = this[Keys.NavigationSounds] ?: defaults.navigationSounds,
+            screensaverMinutes = this[Keys.ScreensaverMinutes] ?: defaults.screensaverMinutes,
         )
     }
 
@@ -102,6 +107,8 @@ class SettingsRepository(context: Context) {
         val ShowClock = booleanPreferencesKey("show_clock")
         val ShowPhoneApps = booleanPreferencesKey("show_phone_apps")
         val HomeOverride = booleanPreferencesKey("home_override")
+        val NavigationSounds = booleanPreferencesKey("navigation_sounds")
+        val ScreensaverMinutes = intPreferencesKey("screensaver_minutes")
     }
 
     private companion object {
