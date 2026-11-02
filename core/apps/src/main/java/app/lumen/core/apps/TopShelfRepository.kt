@@ -7,7 +7,6 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.Paint
-import android.graphics.Rect
 import android.graphics.RectF
 import android.media.tv.TvContract.PreviewPrograms
 import android.media.tv.TvContract.WatchNextPrograms
@@ -24,17 +23,25 @@ import java.io.InputStream
 import java.net.HttpURLConnection
 import java.net.URL
 import java.util.concurrent.ConcurrentHashMap
-import kotlin.math.max
 
 /** What an app publishes for the stage behind the dock: artwork, and what to watch next. */
 class ShelfArt(
     val packageName: String,
     val title: String?,
-    /** 16:9, already cropped and downscaled to [TopShelfRepository.ART_WIDTH] wide. */
-    val image: Bitmap,
+    /**
+     * The stage artwork, still compressed. A full-screen bitmap is 8 MB, too much to keep for every
+     * app in the dock, so it's decoded only when shown, with [decodeBackdrop].
+     */
+    private val backdrop: ByteArray,
     /** The app's Watch Next row, most recently watched first. Empty when it has none. */
     val upNext: List<UpNextItem>,
-)
+) {
+    /**
+     * The artwork cropped to 16:9, as wide as the source allows up to [TopShelfRepository.ART_WIDTH],
+     * mutable so the stage can draw its scrims straight onto it. Blocking; null if it won't decode.
+     */
+    fun decodeBackdrop(): Bitmap? = decodeArt(backdrop, TopShelfRepository.ART_WIDTH, TopShelfRepository.ART_HEIGHT, upscale = false)
+}
 
 /** A program in an app's Watch Next row. */
 class UpNextItem(
@@ -42,6 +49,8 @@ class UpNextItem(
     val title: String,
     /** Tile art at [TopShelfRepository.THUMB_WIDTH] by [TopShelfRepository.THUMB_HEIGHT], with the progress bar drawn in. */
     val thumbnail: Bitmap,
+    /** Where the user is, like "S3, E4 · 23 min left", leaving out whatever the app didn't say. */
+    val detail: String?,
     /** Opens the program in its app; null when the app gave none. */
     val intentUri: String?,
 )
@@ -88,35 +97,41 @@ class TopShelfRepository(context: Context) {
         fun download(uri: Uri) = downloads.getOrPut(uri) {
             async(Dispatchers.IO) { runCatching { open(uri).use(InputStream::readBytes) }.getOrNull() }
         }
-        (watchNext + preview).forEach { download(it.imageUri) }
+        val upNextArt = watchNext.map { download(it.art.first()) }
 
-        val upNext = watchNext.map { program ->
+        val upNext = watchNext.mapIndexed { i, program ->
             async(Dispatchers.Default) {
                 val title = program.title?.takeIf(String::isNotBlank) ?: return@async null
-                val bytes = download(program.imageUri).await() ?: return@async null
-                val thumbnail = decode(bytes, THUMB_WIDTH, THUMB_HEIGHT, MIN_THUMB_WIDTH) ?: return@async null
+                val bytes = upNextArt[i].await() ?: return@async null
+                val thumbnail = decodeArt(bytes, THUMB_WIDTH, THUMB_HEIGHT, upscale = true, minWidth = MIN_THUMB_WIDTH) ?: return@async null
                 program.progress?.let { drawProgress(thumbnail, it) }
-                UpNextItem(packageName, title, thumbnail, program.intentUri)
+                UpNextItem(packageName, title, thumbnail, program.detail, program.intentUri)
             }
         }
-        var backdrop: Pair<Program, Bitmap>? = null
+        // The largest art among a program's poster and thumbnail, since the stage fills the screen.
+        var backdrop: Pair<Program, ByteArray>? = null
         for (program in watchNext.take(MAX_CANDIDATES) + preview) {
-            val bytes = download(program.imageUri).await() ?: continue
-            val image = decode(bytes, ART_WIDTH, ART_HEIGHT, MIN_WIDTH) ?: continue
-            backdrop = program to image
+            val sized = program.art.map(::download).awaitAll().mapNotNull { bytes ->
+                bytes?.let { landscapeWidth(it) }?.takeIf { it >= MIN_WIDTH }?.let { bytes to it }
+            }
+            val (bytes, width) = sized.maxByOrNull { it.second } ?: continue
+            Log.d(TAG, "$packageName stage art ${width}px wide, from ${sized.map { it.second }} (${program.title})")
+            backdrop = program to bytes
             break
         }
         val items = upNext.awaitAll().filterNotNull()
-        backdrop?.let { (program, image) -> ShelfArt(packageName, program.title, image, items) }
+        backdrop?.let { (program, bytes) -> ShelfArt(packageName, program.title, bytes, items) }
     }
 
     private class Program(
         val title: String?,
-        val imageUri: Uri,
+        /** Its landscape art, poster first, then thumbnail. Never empty. */
+        val art: List<Uri>,
         val rank: Long,
         val intentUri: String?,
         /** 0..1 through the program, or null if it hasn't been started. */
         val progress: Float?,
+        val detail: String?,
     )
 
     /** Up to [limit] programs with landscape art, best first: most recently watched, or highest weighted. */
@@ -124,68 +139,61 @@ class TopShelfRepository(context: Context) {
         // The provider rejects selections from apps without full EPG access; it filters by this parameter instead.
         val uri = base.buildUpon().appendQueryParameter("package", packageName).build()
         val projection = arrayOf(
-            TITLE, POSTER_URI, POSTER_ASPECT, THUMBNAIL_URI, THUMBNAIL_ASPECT, INTENT_URI, POSITION, DURATION, rankColumn,
+            TITLE, POSTER_URI, POSTER_ASPECT, THUMBNAIL_URI, THUMBNAIL_ASPECT, INTENT_URI, POSITION, DURATION,
+            SEASON, EPISODE, rankColumn,
         )
         val cursor = context.contentResolver.query(uri, projection, null, null, null) ?: return emptyList()
         return cursor.use { c ->
             buildList {
                 while (c.moveToNext()) {
-                    val image = landscapeArt(c) ?: continue
+                    val art = landscapeArt(c)
+                    if (art.isEmpty()) continue
                     val position = c.longOrZero(POSITION)
                     val duration = c.longOrZero(DURATION)
                     val progress = if (position > 0 && duration > 0) (position.toFloat() / duration).coerceIn(0f, 1f) else null
-                    add(Program(c.stringOrNull(TITLE), image, c.longOrZero(rankColumn), c.stringOrNull(INTENT_URI), progress))
+                    val detail = listOfNotNull(
+                        episodeLabel(c.stringOrNull(SEASON), c.stringOrNull(EPISODE)),
+                        timeLeft(position, duration),
+                    ).joinToString(" · ").ifEmpty { null }
+                    add(Program(c.stringOrNull(TITLE), art, c.longOrZero(rankColumn), c.stringOrNull(INTENT_URI), progress, detail))
                 }
             }.sortedByDescending { it.rank }.take(limit)
         }
     }
 
-    /** The poster if it's landscape, else the thumbnail if that is. Portrait art can't fill a stage. */
-    private fun landscapeArt(c: Cursor): Uri? {
+    /** "S3, E4" as Apple TV writes it, or whichever half the app gave. Display numbers may be words. */
+    private fun episodeLabel(season: String?, episode: String?): String? {
+        fun part(prefix: String, value: String?) = value?.trim()?.takeIf(String::isNotEmpty)?.let { if (it.all(Char::isDigit)) "$prefix$it" else it }
+        return listOfNotNull(part("S", season), part("E", episode)).joinToString(", ").ifEmpty { null }
+    }
+
+    /** "23 min left", "1 hr 5 min left"; null for a program not started or already finished. */
+    private fun timeLeft(position: Long, duration: Long): String? {
+        if (position <= 0 || duration <= position) return null
+        val minutes = ((duration - position + 59_999) / 60_000).toInt()
+        val hours = minutes / 60
+        return when {
+            hours == 0 -> "$minutes min left"
+            minutes % 60 == 0 -> "$hours hr left"
+            else -> "$hours hr ${minutes % 60} min left"
+        }
+    }
+
+    /** The poster and thumbnail, each if it's landscape. Portrait art can't fill a stage. */
+    private fun landscapeArt(c: Cursor): List<Uri> {
         fun art(uriColumn: String, aspectColumn: String): Uri? {
             val uri = c.stringOrNull(uriColumn)?.takeIf { it.isNotBlank() } ?: return null
             val aspect = c.getColumnIndex(aspectColumn).takeIf { it >= 0 && !c.isNull(it) }?.let(c::getInt)
             return Uri.parse(uri).takeIf { aspect == null || aspect in LANDSCAPE_ASPECTS }
         }
-        return art(POSTER_URI, POSTER_ASPECT) ?: art(THUMBNAIL_URI, THUMBNAIL_ASPECT)
+        return listOfNotNull(art(POSTER_URI, POSTER_ASPECT), art(THUMBNAIL_URI, THUMBNAIL_ASPECT)).distinct()
     }
 
-    /**
-     * Decodes [bytes] at about [width] by [height] and center-crops it to that shape. Null when the
-     * image is narrower than [minWidth] or not landscape.
-     */
-    private fun decode(bytes: ByteArray, width: Int, height: Int, minWidth: Int): Bitmap? {
+    /** The image's width if it's landscape, else null. Reads only its header. */
+    private fun landscapeWidth(bytes: ByteArray): Int? {
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
-        if (bounds.outWidth < minWidth || bounds.outHeight <= 0 || bounds.outWidth < bounds.outHeight) return null
-        val options = BitmapFactory.Options().apply {
-            inSampleSize = sampleSize(bounds.outWidth, bounds.outHeight, width, height)
-            inPreferredConfig = Bitmap.Config.ARGB_8888
-        }
-        val decoded = BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options) ?: return null
-        val out = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
-        val scale = max(width.toFloat() / decoded.width, height.toFloat() / decoded.height)
-        val cropW = (width / scale).toInt()
-        val cropH = (height / scale).toInt()
-        val left = (decoded.width - cropW) / 2
-        // Keep the top of tall art, where faces and titles usually are.
-        val top = if (decoded.height > cropH) ((decoded.height - cropH) * 0.2f).toInt() else 0
-        Canvas(out).drawBitmap(
-            decoded,
-            Rect(left, top, left + cropW, top + cropH),
-            Rect(0, 0, width, height),
-            Paint(Paint.FILTER_BITMAP_FLAG or Paint.DITHER_FLAG),
-        )
-        decoded.recycle()
-        out.setHasAlpha(false)
-        return out
-    }
-
-    /** The largest power-of-two subsample that still leaves the image at least [width] by [height]. */
-    private fun sampleSize(imageWidth: Int, imageHeight: Int, width: Int, height: Int): Int {
-        var sample = 1
-        while (imageWidth / (sample * 2) >= width && imageHeight / (sample * 2) >= height) sample *= 2
-        return sample
+        return bounds.outWidth.takeIf { it > 0 && it >= bounds.outHeight }
     }
 
     /** tvOS's thin progress bar along the bottom of the tile: a white fill on a translucent track. */
@@ -227,12 +235,9 @@ class TopShelfRepository(context: Context) {
         /** Not in the public SDK's Manifest.permission, but an ordinary runtime permission. */
         const val PERMISSION = "android.permission.READ_TV_LISTINGS"
 
-        /**
-         * Stage art size. Behind scrims it holds up stretched to 1080p, and it's small enough for the
-         * Chromecast to upload in a frame and draw full screen cheaply.
-         */
-        const val ART_WIDTH = 960
-        const val ART_HEIGHT = 540
+        /** The most the stage decodes: the UI's own 1920x1080, so art is never softer than its source. */
+        const val ART_WIDTH = 1920
+        const val ART_HEIGHT = 1080
 
         /** Up Next tiles share the dock's tile shape; this is a little over their focused size in pixels. */
         const val THUMB_WIDTH = 320
@@ -249,6 +254,8 @@ class TopShelfRepository(context: Context) {
         private const val INTENT_URI = PreviewPrograms.COLUMN_INTENT_URI
         private const val POSITION = PreviewPrograms.COLUMN_LAST_PLAYBACK_POSITION_MILLIS
         private const val DURATION = PreviewPrograms.COLUMN_DURATION_MILLIS
+        private const val SEASON = PreviewPrograms.COLUMN_SEASON_DISPLAY_NUMBER
+        private const val EPISODE = PreviewPrograms.COLUMN_EPISODE_DISPLAY_NUMBER
         private const val LAST_ENGAGEMENT = WatchNextPrograms.COLUMN_LAST_ENGAGEMENT_TIME_UTC_MILLIS
         private const val WEIGHT = PreviewPrograms.COLUMN_WEIGHT
         /** 16:9, 3:2 and 4:3. Square and portrait art would be cropped to a sliver. */

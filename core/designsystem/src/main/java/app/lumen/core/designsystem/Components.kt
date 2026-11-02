@@ -36,7 +36,6 @@ import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawWithContent
-import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
@@ -95,7 +94,6 @@ private const val TILT_DEGREES = 6f
 /** Scale of a focused tile, and of one that has held focus for a while. */
 private const val FOCUS_SCALE = 1.12f
 private const val IDLE_FOCUS_SCALE = 1.17f
-private const val IDLE_DIM = 0.42f
 private const val IDLE_SWAY = 0.3f
 private const val IDLE_SWAY_MS = 2_600
 private const val IDLE_SWAYS = 3
@@ -105,9 +103,11 @@ private const val LIFTED_SCALE = 1.2f
 private const val WIGGLE_DEGREES = 1.6f
 private const val WIGGLE_MS = 130
 
+private const val ROW_FOCUS_MS = 80
+
 /**
- * True once the remote has gone quiet for a while. As on tvOS, out-of-focus tiles dim then, and
- * the focused one expands and gently sways.
+ * True once the remote has gone quiet for a while. The focused tile then expands and gently sways,
+ * as on tvOS.
  */
 val LocalFocusIdle = compositionLocalOf { false }
 
@@ -168,7 +168,6 @@ fun AppTile(
         }
         tiltX.animateTo(0f, slow)
     }
-    val idleDim by animateFloatAsState(if (idle && !focused) IDLE_DIM else 0f, tween(700), label = "tileDim")
     val scale by animateFloatAsState(
         targetValue = when {
             lifted -> LIFTED_SCALE
@@ -271,7 +270,6 @@ fun AppTile(
                         )
                     }
                     drawGlassRim(LumenDimens.TileCorner, strength = 0.5f + 0.5f * focusAlpha)
-                    if (idleDim > 0f) drawRect(Color.Black, alpha = idleDim)
                 },
         ) {
             Image(
@@ -293,7 +291,11 @@ fun AppTile(
     }
 }
 
-/** A full-width list row in the style of tvOS Settings: flat at rest, white when focused. */
+/**
+ * A full-width list row in the style of tvOS Settings: flat at rest, white and lifted when focused.
+ * The white switches almost at once, so moving down a list never shows two half-lit rows, and it
+ * casts no shadow, which on glass reads as a smudge.
+ */
 @Composable
 fun MenuRow(
     title: String,
@@ -305,15 +307,14 @@ fun MenuRow(
     onFocused: () -> Unit = {},
 ) {
     var focused by remember { mutableStateOf(false) }
-    val background by animateColorAsState(if (focused) LumenColors.Focused else Color.Transparent, tween(160), label = "rowBg")
-    val content by animateColorAsState(if (focused) LumenColors.OnFocused else LumenColors.TextPrimary, tween(160), label = "rowFg")
+    val background by animateColorAsState(if (focused) LumenColors.Focused else Color.Transparent, tween(ROW_FOCUS_MS), label = "rowBg")
+    val content by animateColorAsState(if (focused) LumenColors.OnFocused else LumenColors.TextPrimary, tween(ROW_FOCUS_MS), label = "rowFg")
     val secondary = if (focused) LumenColors.OnFocused.copy(alpha = 0.6f) else LumenColors.TextSecondary
     val scale by animateFloatAsState(
-        targetValue = if (focused) 1.025f else 1f,
-        animationSpec = spring(dampingRatio = 0.8f, stiffness = Spring.StiffnessMedium),
+        targetValue = if (focused) 1.035f else 1f,
+        animationSpec = spring(dampingRatio = 0.65f, stiffness = Spring.StiffnessMediumLow),
         label = "rowScale",
     )
-    val elevation by animateDpAsState(if (focused) 16.dp else 0.dp, tween(200), label = "rowElevation")
     val shape = RoundedCornerShape(22.dp)
 
     Row(
@@ -328,7 +329,6 @@ fun MenuRow(
                 scaleX = scale
                 scaleY = scale
             }
-            .shadow(elevation, shape)
             .background(background, shape)
             .padding(horizontal = 20.dp, vertical = 13.dp),
         verticalAlignment = Alignment.CenterVertically,

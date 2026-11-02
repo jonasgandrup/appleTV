@@ -63,25 +63,25 @@ internal fun AppOptionsDialog(
     options: AppOptions,
     onDismiss: () -> Unit,
 ) {
-    GlassDialog(onDismiss, Alignment.Center, Modifier.width(300.dp), anchor = anchor) { firstRow ->
+    GlassDialog(onDismiss, Alignment.Center, Modifier.width(280.dp), anchor = anchor) { firstRow ->
         fun run(action: () -> Unit): () -> Unit = {
             onDismiss()
             action()
         }
         Row(
-            Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+            Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             val icon = remember(app.icon) { app.icon.asImageBitmap() }
-            Image(icon, null, Modifier.size(36.dp).clip(RoundedCornerShape(8.dp)), filterQuality = FilterQuality.High)
-            Spacer(Modifier.width(14.dp))
-            LumenText(app.label, LumenType.Title, maxLines = 1)
+            Image(icon, null, Modifier.size(28.dp).clip(RoundedCornerShape(7.dp)), filterQuality = FilterQuality.High)
+            Spacer(Modifier.width(12.dp))
+            LumenText(app.label, LumenType.Headline, maxLines = 1)
         }
-        Spacer(Modifier.height(6.dp))
+        Spacer(Modifier.height(2.dp))
 
         MenuRow("Edit Home Screen", run(options.onEditHomeScreen), Modifier.focusRequester(firstRow))
         MenuRow(if (isFavorite) "Remove from Top Shelf" else "Add to Top Shelf", run(options.onToggleFavorite))
-        MenuRow("Hide App", run(options.onHide), subtitle = "Bring it back from Settings › Hidden Apps")
+        MenuRow("Hide App", run(options.onHide))
         MenuRow("App Info", run(options.onAppInfo))
     }
 }

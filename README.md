@@ -16,7 +16,7 @@ Built with Kotlin and Jetpack Compose, designed for the D-pad remote first.
 | **Control Center** | Press Up from the dock to reach the clock, then Select: a glass panel with the time, date, Screen Saver and Settings. |
 | **App grid** | tvOS's six-column grid and 5:3 tiles below the dock, ending with a Settings tile. Back returns to the dock. Every tile shares one frame: the app's banner, or a card built from its icon. |
 | **Liquid glass** | Floating glass panels with lit rims and soft highlights. Frost comes from images blurred once on the CPU rather than a live blur, and the backdrop is baked into one bitmap, to spare the Chromecast's GPU. |
-| **Motion & sound** | After a few quiet seconds the focused tile expands and sways while the rest dim, as on tvOS. Tiles lift, catch a sweep of light and lean into D-pad presses; apps zoom open out of their tile. Soft navigation clicks, which can be turned off. |
+| **Motion & sound** | After a few quiet seconds the focused tile expands and gently sways, as on tvOS. Tiles lift, catch a sweep of light and lean into D-pad presses; apps zoom open out of their tile. Soft navigation clicks, which can be turned off. |
 | **Screensaver** | After a few idle minutes on the home screen: slowly drifting wallpaper (your photos, or the gradients) with a large clock that changes sides to protect OLED panels. |
 | **Remote control** | Every element is reachable with the D-pad. Select opens an app; **hold Select** for options (pin, reorder, hide, app info). Rows remember where you were. Home while on the home screen jumps back to the top. |
 | **Settings** | Wallpaper, ambient backdrop, clock, screensaver, navigation sounds, non-TV apps, hidden apps, Home-button behavior, a shortcut to Android Settings. |

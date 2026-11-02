@@ -4,7 +4,6 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.LinearGradient
 import android.graphics.Paint
-import android.graphics.Rect
 import android.graphics.RadialGradient
 import android.graphics.Shader
 import androidx.compose.animation.AnimatedContent
@@ -142,7 +141,7 @@ internal fun rememberShelfArt(
     return art
 }
 
-private const val SHELF_ART_SETTLE_MS = 350L
+private const val SHELF_ART_SETTLE_MS = 250L
 
 /**
  * The full-screen stage behind everything: the focused app's [shelfArt] when it publishes some,
@@ -158,7 +157,7 @@ internal fun Backdrop(wallpaper: Wallpaper, app: AppInfo?, shelfArt: ShelfArt?, 
     val dimAlpha by animateFloatAsState(dim, tween(450), label = "dim")
     val preset = (wallpaper as? Wallpaper.Gradient)?.preset
     val art = app?.art
-    val artwork = shelfArt?.takeIf { it.packageName == app?.packageName }?.image
+    val artwork = shelfArt?.takeIf { it.packageName == app?.packageName }
     var current by remember { mutableStateOf<ImageBitmap?>(null) }
     var previous by remember { mutableStateOf<ImageBitmap?>(null) }
     val fade = remember { Animatable(1f) }
@@ -169,7 +168,7 @@ internal fun Backdrop(wallpaper: Wallpaper, app: AppInfo?, shelfArt: ShelfArt?, 
         // Quick presses along the dock restart this effect before anything is baked or faded.
         if (!first) delay(BACKDROP_SETTLE_MS)
         val next = withContext(Dispatchers.Default) {
-            (artwork?.let(::bakeArtwork) ?: bakeBackdrop(preset, art)).asImageBitmap()
+            (artwork?.decodeBackdrop()?.let(::bakeArtwork) ?: bakeBackdrop(preset, art)).asImageBitmap()
         }
         val opaque = !next.hasAlpha
         coversWallpaper = coversWallpaper && opaque
@@ -202,14 +201,13 @@ internal fun Backdrop(wallpaper: Wallpaper, app: AppInfo?, shelfArt: ShelfArt?, 
 
 /**
  * The app's artwork, full bleed, under scrims that are heavier than the color stage's: a photo
- * is busier than a gradient behind the title and the dock. Opaque. Blocking.
+ * is busier than a gradient behind the title and the dock. Drawn onto [bitmap] itself, which is
+ * freshly decoded for this, so a full-screen bitmap is never copied. Opaque. Blocking.
  */
-private fun bakeArtwork(image: Bitmap): Bitmap {
-    val bitmap = Bitmap.createBitmap(image.width, image.height, Bitmap.Config.ARGB_8888)
+private fun bakeArtwork(bitmap: Bitmap): Bitmap {
     val canvas = Canvas(bitmap)
     val width = bitmap.width.toFloat()
     val height = bitmap.height.toFloat()
-    canvas.drawBitmap(image, null, Rect(0, 0, bitmap.width, bitmap.height), null)
     val scrim = Paint().apply { isDither = true }
     scrim.shader = LinearGradient(
         0f, 0f, 0f, height,
