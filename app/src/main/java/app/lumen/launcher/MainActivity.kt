@@ -4,6 +4,7 @@ import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import app.lumen.core.apps.TopShelfRepository
 import kotlinx.coroutines.flow.MutableSharedFlow
 
 class MainActivity : ComponentActivity() {
@@ -14,6 +15,8 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         val container = (application as LumenApplication).container
         setContent { LumenApp(container, homePresses) }
+        // For the apps' own artwork on the stage. Android stops asking after the user declines twice.
+        if (!container.topShelf.hasPermission) requestPermissions(arrayOf(TopShelfRepository.PERMISSION), 0)
     }
 
     /** Home pressed (or the override service redirected) while Lumen is already running. */

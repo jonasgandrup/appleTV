@@ -1,6 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
+    <!-- Lets TopShelfRepository read other apps' Watch Next and preview channels from the TV provider. -->
+    <uses-permission android:name="android.permission.READ_TV_LISTINGS" />
+    <!-- Channel artwork is usually an https URL. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+
     <!-- Android 11+ package visibility: let us see every launchable app. -->
     <queries>
         <intent>

@@ -9,6 +9,8 @@ import androidx.lifecycle.viewmodel.viewModelFactory
 import app.lumen.core.apps.AppInfo
 import app.lumen.core.apps.AppLauncher
 import app.lumen.core.apps.AppRepository
+import app.lumen.core.apps.ShelfArt
+import app.lumen.core.apps.TopShelfRepository
 import app.lumen.core.settings.LauncherSettings
 import app.lumen.core.settings.SettingsRepository
 import app.lumen.core.settings.WallpaperLibrary
@@ -34,6 +36,7 @@ class HomeViewModel(
     private val launcher: AppLauncher,
     private val settings: SettingsRepository,
     private val wallpapers: WallpaperLibrary,
+    private val topShelf: TopShelfRepository,
 ) : ViewModel() {
 
     val state: StateFlow<HomeUiState> = combine(apps.apps, settings.settings) { list, prefs ->
@@ -48,7 +51,7 @@ class HomeViewModel(
             loading = false,
             favorites = favorites,
             allApps = visible,
-            others = visible - favorites.toSet(),
+            others = (visible - favorites.toSet()).sortedBy { prefs.gridOrder.indexOf(it.packageName).let { i -> if (i < 0) Int.MAX_VALUE else i } },
             settings = prefs,
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), HomeUiState())
@@ -64,8 +67,14 @@ class HomeViewModel(
     /** The user's wallpaper photos, which the screensaver prefers over the built-in gradients. */
     suspend fun screensaverPhotos(): List<String> = wallpapers.list().map { it.path }
 
+    /** Artwork the app publishes to its TV channels, for the stage; null when it has none. */
+    suspend fun shelfArt(app: AppInfo): ShelfArt? = topShelf.load(app.packageName)
+    fun cachedShelfArt(app: AppInfo): ShelfArt? = topShelf.peek(app.packageName)
+
     fun toggleFavorite(app: AppInfo) = viewModelScope.launch { settings.toggleFavorite(app.packageName) }
-    fun moveFavorite(app: AppInfo, offset: Int) = viewModelScope.launch { settings.moveFavorite(app.packageName, offset) }
+    fun saveArrangement(favorites: List<AppInfo>, grid: List<AppInfo>) = viewModelScope.launch {
+        settings.saveArrangement(favorites.map { it.packageName }, grid.map { it.packageName })
+    }
     fun hide(app: AppInfo) = viewModelScope.launch { settings.setHidden(app.packageName, true) }
 
     /** On first run, pin the popular streaming apps that are installed, topped up to a full row. */
@@ -100,7 +109,8 @@ class HomeViewModel(
             launcher: AppLauncher,
             settings: SettingsRepository,
             wallpapers: WallpaperLibrary,
+            topShelf: TopShelfRepository,
         ): ViewModelProvider.Factory =
-            viewModelFactory { initializer { HomeViewModel(apps, launcher, settings, wallpapers) } }
+            viewModelFactory { initializer { HomeViewModel(apps, launcher, settings, wallpapers, topShelf) } }
     }
 }

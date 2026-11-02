@@ -41,10 +41,13 @@ class SettingsRepository(context: Context) {
         if (packageName in list) list - packageName else list + packageName
     }
 
-    suspend fun moveFavorite(packageName: String, offset: Int) = editFavorites { list ->
-        val from = list.indexOf(packageName)
-        val to = (from + offset).coerceIn(0, list.lastIndex)
-        if (from < 0 || from == to) list else list.toMutableList().apply { add(to, removeAt(from)) }
+    /** Saves a whole home screen arrangement at once, as tvOS does when an app is dropped in Edit Home Screen. */
+    suspend fun saveArrangement(favorites: List<String>, grid: List<String>) {
+        store.edit {
+            it[Keys.Favorites] = favorites.encodeList()
+            it[Keys.FavoritesInitialized] = true
+            it[Keys.GridOrder] = grid.encodeList()
+        }
     }
 
     suspend fun setHidden(packageName: String, hidden: Boolean) {
@@ -85,6 +88,7 @@ class SettingsRepository(context: Context) {
         return LauncherSettings(
             favorites = this[Keys.Favorites].decodeList(),
             favoritesInitialized = this[Keys.FavoritesInitialized] ?: false,
+            gridOrder = this[Keys.GridOrder].decodeList(),
             hidden = this[Keys.Hidden].orEmpty(),
             recents = this[Keys.Recents].decodeList(),
             wallpaper = Wallpaper.decode(this[Keys.Wallpaper]),
@@ -100,6 +104,7 @@ class SettingsRepository(context: Context) {
     private object Keys {
         val Favorites = stringPreferencesKey("favorites")
         val FavoritesInitialized = booleanPreferencesKey("favorites_initialized")
+        val GridOrder = stringPreferencesKey("grid_order")
         val Hidden = stringSetPreferencesKey("hidden")
         val Recents = stringPreferencesKey("recents")
         val Wallpaper = stringPreferencesKey("wallpaper")

@@ -62,7 +62,7 @@ fun LumenApp(container: AppContainer, homePresses: Flow<Unit>) {
         ) { target ->
             when (target) {
                 Destination.Home -> HomeScreen(
-                    viewModel = viewModel(factory = HomeViewModel.factory(container.apps, container.launcher, container.settings, container.wallpapers)),
+                    viewModel = viewModel(factory = HomeViewModel.factory(container.apps, container.launcher, container.settings, container.wallpapers, container.topShelf)),
                     homePresses = homeScreenPresses,
                     onOpenSettings = { destination = Destination.Settings },
                 )

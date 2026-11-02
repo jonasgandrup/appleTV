@@ -12,7 +12,8 @@ import androidx.compose.ui.unit.sp
 
 /*
  * Android TV renders the UI at 1920x1080 (xhdpi), i.e. a 960x540 dp canvas, and the
- * Chromecast upscales it to 4K. Everything here is sized for that canvas.
+ * Chromecast upscales it to 4K. Everything here is sized for that canvas. Apple's tvOS numbers
+ * are in points on a 1920-wide canvas, so each one taken from its guidelines is halved.
  */
 
 object LumenColors {
@@ -24,18 +25,31 @@ object LumenColors {
     val SurfaceRaised = Color(0xFF1C1C1E)
     val Focused = Color(0xFFFFFFFF)
     val OnFocused = Color(0xFF0C0C0E)
+    /** Glass carrying text, like panels and menus. */
+    val GlassTint = Color(0x12FFFFFF)
+    /** Glass floating over artwork, like the dock. Dims what's behind it, as tvOS's does. */
+    val GlassTintDim = Color(0x2E000000)
+    /** Glass with focus on it. */
+    val GlassFocused = Color(0xF2FFFFFF)
+    /** For glass with nothing frosted behind it, where text has to stay readable by itself. */
+    val GlassTintOpaque = Color(0xEB26262A)
 }
 
 object LumenDimens {
-    /** Overscan-safe margins from the Android TV design guidelines. */
-    val SafeHorizontal = 48.dp
-    val SafeVertical = 27.dp
+    /** tvOS safe area: 80 pt from the sides, 60 pt from the top and bottom. */
+    val SafeHorizontal = 40.dp
+    val SafeVertical = 30.dp
 
-    val TileWidth = 152.dp
-    val TileHeight = 86.dp
-    val TileSpacing = 24.dp
-    val TileCorner = 12.dp
-    const val TilesPerRow = 5
+    /** tvOS's six-column grid: 260 pt wide with 40 pt gaps, shaped like its 5:3 app icons. */
+    val TileWidth = 130.dp
+    val TileHeight = 78.dp
+    val TileSpacing = 20.dp
+    val TileCorner = 14.dp
+    const val TilesPerRow = 6
+
+    val GlassCorner = 28.dp
+    /** Larger than any capsule is tall; glass clamps it to a full pill. */
+    val CapsuleCorner = 100.dp
 }
 
 object LumenType {
@@ -59,32 +73,34 @@ object LumenType {
         },
     )
 
+    /** The featured title; larger than tvOS's largest text style, standing in for its logo artwork. */
     val Display = TextStyle(
         fontFamily = DisplayFamily, fontWeight = FontWeight.SemiBold,
-        fontSize = 44.sp, lineHeight = 50.sp, letterSpacing = (-0.6).sp,
+        fontSize = 46.sp, lineHeight = 52.sp, letterSpacing = (-0.7).sp,
     )
+    /** tvOS Title 2. */
     val Title = TextStyle(
-        fontFamily = DisplayFamily, fontWeight = FontWeight.SemiBold,
-        fontSize = 28.sp, lineHeight = 34.sp, letterSpacing = (-0.3).sp,
+        fontFamily = DisplayFamily, fontWeight = FontWeight.Medium,
+        fontSize = 28.5.sp, lineHeight = 33.sp, letterSpacing = (-0.3).sp,
     )
+    /** tvOS Headline. */
     val Headline = TextStyle(
         fontFamily = Family, fontWeight = FontWeight.Medium,
-        fontSize = 18.sp, lineHeight = 24.sp,
+        fontSize = 19.sp, lineHeight = 23.sp,
     )
+    /** tvOS Body. */
     val Body = TextStyle(
-        fontFamily = Family, fontWeight = FontWeight.Normal,
-        fontSize = 15.sp, lineHeight = 21.sp,
+        fontFamily = Family, fontWeight = FontWeight.Medium,
+        fontSize = 14.5.sp, lineHeight = 18.sp,
     )
+    /** tvOS Callout. */
     val Section = TextStyle(
-        fontFamily = Family, fontWeight = FontWeight.SemiBold,
-        fontSize = 15.sp, lineHeight = 20.sp, letterSpacing = 0.1.sp,
+        fontFamily = Family, fontWeight = FontWeight.Medium,
+        fontSize = 15.5.sp, lineHeight = 19.sp,
     )
+    /** tvOS Caption 1. */
     val Caption = TextStyle(
         fontFamily = Family, fontWeight = FontWeight.Medium,
-        fontSize = 13.sp, lineHeight = 18.sp,
-    )
-    val Overline = TextStyle(
-        fontFamily = Family, fontWeight = FontWeight.SemiBold,
-        fontSize = 12.sp, lineHeight = 16.sp, letterSpacing = 1.6.sp,
+        fontSize = 12.5.sp, lineHeight = 16.sp,
     )
 }

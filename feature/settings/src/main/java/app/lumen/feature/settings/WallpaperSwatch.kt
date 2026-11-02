@@ -23,6 +23,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
@@ -32,8 +33,10 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import app.lumen.core.designsystem.GradientFill
 import app.lumen.core.designsystem.LumenColors
+import app.lumen.core.designsystem.LumenDimens
 import app.lumen.core.designsystem.LumenText
 import app.lumen.core.designsystem.LumenType
+import app.lumen.core.designsystem.drawGlassRim
 import app.lumen.core.designsystem.rememberWallpaperImage
 import app.lumen.core.designsystem.tvClickable
 import app.lumen.core.settings.Wallpaper
@@ -57,7 +60,7 @@ internal fun WallpaperSwatch(
         label = "swatchScale",
     )
     val elevation by animateDpAsState(if (focused) 20.dp else 0.dp, tween(250), label = "swatchElevation")
-    val shape = RoundedCornerShape(12.dp)
+    val shape = RoundedCornerShape(LumenDimens.TileCorner)
 
     Column(Modifier.width(SwatchWidth), horizontalAlignment = Alignment.CenterHorizontally) {
         Box(
@@ -74,7 +77,11 @@ internal fun WallpaperSwatch(
                 }
                 .shadow(elevation, shape)
                 .clip(shape)
-                .then(if (selected) Modifier.border(3.dp, Color.White, shape) else Modifier),
+                .then(if (selected) Modifier.border(3.dp, Color.White, shape) else Modifier)
+                .drawWithContent {
+                    drawContent()
+                    if (!selected) drawGlassRim(LumenDimens.TileCorner)
+                },
         ) {
             when (wallpaper) {
                 is Wallpaper.Gradient -> GradientFill(wallpaper.preset, Modifier.fillMaxSize())

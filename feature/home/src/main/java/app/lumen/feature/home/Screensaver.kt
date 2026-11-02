@@ -1,6 +1,5 @@
 package app.lumen.feature.home
 
-import android.text.format.DateFormat
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.Animatable
@@ -15,6 +14,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -33,7 +33,6 @@ import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -42,18 +41,17 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.currentStateAsState
 import app.lumen.core.designsystem.GradientFill
+import app.lumen.core.designsystem.LocalFocusIdle
 import app.lumen.core.designsystem.LumenColors
 import app.lumen.core.designsystem.LumenDimens
 import app.lumen.core.designsystem.LumenText
 import app.lumen.core.designsystem.LumenType
+import app.lumen.core.designsystem.rememberClockText
 import app.lumen.core.designsystem.rememberWallpaperImage
 import app.lumen.core.settings.GradientPreset
 import app.lumen.core.settings.Wallpaper
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
 
 private const val SLIDE_MS = 40_000
 private const val CROSSFADE_MS = 2_500
@@ -63,6 +61,9 @@ private const val CROSSFADE_MS = 2_500
  * Kept short because many TVs (OLEDs especially) shouldn't show one scene for hours.
  */
 private const val MAX_SCREENSAVER_MS = 30 * 60_000L
+
+/** How long the remote stays quiet before tiles settle into [LocalFocusIdle]. */
+private const val FOCUS_IDLE_MS = 7_000L
 
 /**
  * Wraps the home screen and fades in a screensaver after [timeoutMinutes] without input while
@@ -77,6 +78,7 @@ internal fun ScreensaverHost(
     wallpaper: Wallpaper,
     loadPhotos: suspend () -> List<String>,
     wake: Flow<Unit>,
+    startNow: Flow<Unit>,
     content: @Composable () -> Unit,
 ) {
     val lifecycleState by LocalLifecycleOwner.current.lifecycle.currentStateAsState()
@@ -86,7 +88,16 @@ internal fun ScreensaverHost(
     var expired by remember { mutableStateOf(false) }
     var swallowKeyUp by remember { mutableStateOf(false) }
 
+    var focusIdle by remember { mutableStateOf(false) }
+
     LaunchedEffect(wake) { wake.collect { inputCount++ } }
+    LaunchedEffect(startNow) { startNow.collect { showing = true } }
+    LaunchedEffect(resumed, inputCount) {
+        focusIdle = false
+        if (!resumed) return@LaunchedEffect
+        delay(FOCUS_IDLE_MS)
+        focusIdle = true
+    }
 
     LaunchedEffect(resumed, timeoutMinutes, inputCount) {
         showing = false
@@ -126,7 +137,7 @@ internal fun ScreensaverHost(
                 }
             },
     ) {
-        content()
+        CompositionLocalProvider(LocalFocusIdle provides focusIdle) { content() }
         AnimatedVisibility(showing, enter = fadeIn(tween(1_500)), exit = fadeOut(tween(300))) {
             Screensaver(wallpaper, loadPhotos)
         }
@@ -205,22 +216,10 @@ private fun PhotoSlide(path: String) {
 
 @Composable
 private fun ScreensaverClock(modifier: Modifier, alignEnd: Boolean) {
-    val context = LocalContext.current
-    var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
-    LaunchedEffect(Unit) {
-        while (true) {
-            now = System.currentTimeMillis()
-            delay(60_000 - now % 60_000)
-        }
-    }
-    val timePattern = if (DateFormat.is24HourFormat(context)) "HH:mm" else "h:mm"
-    val time = remember(now, timePattern) { SimpleDateFormat(timePattern, Locale.getDefault()).format(Date(now)) }
-    val date = remember(now) {
-        SimpleDateFormat(DateFormat.getBestDateTimePattern(Locale.getDefault(), "EEEEdMMMM"), Locale.getDefault()).format(Date(now))
-    }
+    val (time, date) = rememberClockText()
     val align = if (alignEnd) Alignment.End else Alignment.Start
     Column(modifier, horizontalAlignment = align) {
-        LumenText(time, LumenType.Display.copy(fontSize = 88.sp, lineHeight = 92.sp, fontWeight = FontWeight.Light, letterSpacing = (-1.5).sp))
+        LumenText(time, LumenType.Display.copy(fontSize = 88.sp, lineHeight = 92.sp, fontWeight = FontWeight.Normal, letterSpacing = (-1.5).sp))
         LumenText(date, LumenType.Headline, color = LumenColors.TextSecondary, modifier = Modifier.padding(start = 4.dp, end = 4.dp))
     }
 }

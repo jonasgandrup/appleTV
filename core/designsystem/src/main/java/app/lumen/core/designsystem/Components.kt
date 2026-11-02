@@ -32,9 +32,9 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.focus.onFocusChanged
@@ -54,6 +54,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -91,9 +92,28 @@ private object TileMotion {
 
 private const val TILT_DEGREES = 6f
 
+/** Scale of a focused tile, and of one that has held focus for a while. */
+private const val FOCUS_SCALE = 1.12f
+private const val IDLE_FOCUS_SCALE = 1.17f
+private const val IDLE_DIM = 0.42f
+private const val IDLE_SWAY = 0.3f
+private const val IDLE_SWAY_MS = 2_600
+private const val IDLE_SWAYS = 3
+
+/** A tile lifted in Edit Home Screen: a little larger than focus, wiggling as on tvOS. */
+private const val LIFTED_SCALE = 1.2f
+private const val WIGGLE_DEGREES = 1.6f
+private const val WIGGLE_MS = 130
+
 /**
- * A tvOS-style app tile: lifts and grows on focus, leans into D-pad presses, catches a sweep of
- * light, and reveals its label underneath. [art] is the app's 16:9 tile artwork.
+ * True once the remote has gone quiet for a while. As on tvOS, out-of-focus tiles dim then, and
+ * the focused one expands and gently sways.
+ */
+val LocalFocusIdle = compositionLocalOf { false }
+
+/**
+ * A tvOS-style app tile with a glass edge: lifts and grows on focus, leans into D-pad presses,
+ * catches a sweep of light, and reveals its label underneath. [art] is the app's 16:9 tile artwork.
  */
 @Composable
 fun AppTile(
@@ -104,7 +124,12 @@ fun AppTile(
     tileModifier: Modifier = Modifier,
     onLongClick: (() -> Unit)? = null,
     onFocused: () -> Unit = {},
+    /** The art lets the background through, so it gets no shadow, which would show through as a smudge. */
+    translucent: Boolean = false,
+    /** Picked up in Edit Home Screen. */
+    lifted: Boolean = false,
 ) {
+    val idle = LocalFocusIdle.current
     var focused by remember { mutableStateOf(false) }
     // -1..1 per axis; positive leans right / down.
     val tiltX = remember { Animatable(0f) }
@@ -121,12 +146,51 @@ fun AppTile(
         launch { tiltX.animateTo(0f, settle) }
         launch { tiltY.animateTo(0f, settle) }
     }
+    // Sways a few times and stops: an endless sway would keep the GPU busy for no one.
+    val wiggle = remember { Animatable(0f) }
+    LaunchedEffect(lifted) {
+        if (!lifted) {
+            wiggle.animateTo(0f, tween(WIGGLE_MS))
+            return@LaunchedEffect
+        }
+        while (true) {
+            wiggle.animateTo(WIGGLE_DEGREES, tween(WIGGLE_MS))
+            wiggle.animateTo(-WIGGLE_DEGREES, tween(WIGGLE_MS))
+        }
+    }
+    LaunchedEffect(focused, idle) {
+        if (!focused || !idle || lifted) return@LaunchedEffect
+        val slow = tween<Float>(IDLE_SWAY_MS, easing = FastOutSlowInEasing)
+        tiltX.animateTo(IDLE_SWAY, slow)
+        repeat(IDLE_SWAYS) {
+            tiltX.animateTo(-IDLE_SWAY, slow)
+            tiltX.animateTo(IDLE_SWAY, slow)
+        }
+        tiltX.animateTo(0f, slow)
+    }
+    val idleDim by animateFloatAsState(if (idle && !focused) IDLE_DIM else 0f, tween(700), label = "tileDim")
     val scale by animateFloatAsState(
-        targetValue = if (focused) 1.12f else 1f,
+        targetValue = when {
+            lifted -> LIFTED_SCALE
+            !focused -> 1f
+            idle -> IDLE_FOCUS_SCALE
+            else -> FOCUS_SCALE
+        },
         animationSpec = spring(dampingRatio = 0.7f, stiffness = Spring.StiffnessMediumLow),
         label = "tileScale",
     )
-    val elevation by animateDpAsState(if (focused) 24.dp else 2.dp, tween(250), label = "tileElevation")
+    // Only the focused tile casts a shadow: across a whole screen of tiles they add up on the Chromecast.
+    // Read only inside the layer below, so animating it doesn't recompose the tile every frame.
+    val elevation = animateDpAsState(
+        when {
+            translucent -> 0.dp
+            lifted -> 36.dp
+            focused -> 24.dp
+            else -> 0.dp
+        },
+        tween(250),
+        label = "tileElevation",
+    )
     val focusAlpha by animateFloatAsState(if (focused) 1f else 0f, tween(220), label = "tileFocus")
     val sheen = remember { Animatable(0f) }
     LaunchedEffect(focused) {
@@ -173,19 +237,27 @@ fun AppTile(
                     // The side the remote points toward tips away from the viewer.
                     rotationY = tiltX.value * TILT_DEGREES
                     rotationX = -tiltY.value * TILT_DEGREES
+                    rotationZ = wiggle.value
                     cameraDistance = 16f * density
+                    shadowElevation = elevation.value.toPx()
+                    this.shape = shape
+                    clip = true
                 }
-                .shadow(elevation, shape, ambientColor = Color.Black, spotColor = Color.Black)
-                .clip(shape)
                 .drawWithContent {
                     drawContent()
-                    // Top gloss while focused.
-                    drawRect(
-                        Brush.verticalGradient(
-                            listOf(Color.White.copy(alpha = 0.14f * focusAlpha), Color.Transparent),
-                            endY = size.height * 0.6f,
-                        ),
-                    )
+                    // A soft light above the glass while focused, sliding as the tile tilts.
+                    if (focusAlpha > 0f) {
+                        drawRect(
+                            Brush.radialGradient(
+                                listOf(Color.White.copy(alpha = 0.32f * focusAlpha), Color.Transparent),
+                                center = Offset(
+                                    size.width * (0.3f - tiltX.value * 0.35f),
+                                    size.height * (-0.1f - tiltY.value * 0.35f),
+                                ),
+                                radius = size.width * 0.75f,
+                            ),
+                        )
+                    }
                     // A single diagonal sweep of light on focus.
                     val p = sheen.value
                     if (p > 0f && p < 1f) {
@@ -198,6 +270,8 @@ fun AppTile(
                             ),
                         )
                     }
+                    drawGlassRim(LumenDimens.TileCorner, strength = 0.5f + 0.5f * focusAlpha)
+                    if (idleDim > 0f) drawRect(Color.Black, alpha = idleDim)
                 },
         ) {
             Image(
@@ -208,7 +282,7 @@ fun AppTile(
                 filterQuality = FilterQuality.High,
             )
         }
-        Spacer(Modifier.height(14.dp))
+        Spacer(Modifier.height(11.dp))
         LumenText(
             text = label,
             style = LumenType.Caption,
@@ -240,7 +314,7 @@ fun MenuRow(
         label = "rowScale",
     )
     val elevation by animateDpAsState(if (focused) 16.dp else 0.dp, tween(200), label = "rowElevation")
-    val shape = RoundedCornerShape(14.dp)
+    val shape = RoundedCornerShape(22.dp)
 
     Row(
         modifier = modifier
@@ -269,8 +343,9 @@ fun MenuRow(
     }
 }
 
+/** The current time and date, updated on the minute. */
 @Composable
-fun Clock(modifier: Modifier = Modifier) {
+fun rememberClockText(): Pair<String, String> {
     val context = LocalContext.current
     var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
     LaunchedEffect(Unit) {
@@ -280,17 +355,46 @@ fun Clock(modifier: Modifier = Modifier) {
         }
     }
     val pattern = if (DateFormat.is24HourFormat(context)) "HH:mm" else "h:mm"
-    val text = remember(now, pattern) { SimpleDateFormat(pattern, Locale.getDefault()).format(Date(now)) }
-    LumenText(text, LumenType.Headline, modifier, color = LumenColors.TextPrimary)
+    val time = remember(now, pattern) { SimpleDateFormat(pattern, Locale.getDefault()).format(Date(now)) }
+    val date = remember(now) {
+        SimpleDateFormat(DateFormat.getBestDateTimePattern(Locale.getDefault(), "EEEEdMMMM"), Locale.getDefault()).format(Date(now))
+    }
+    return time to date
 }
 
-/** Section heading inside scrolling screens. */
+/** The little glass pill in the corner of the home screen. Focusable; it opens Control Center. */
 @Composable
-fun SectionTitle(text: String, modifier: Modifier = Modifier) {
+fun Clock(onClick: () -> Unit, modifier: Modifier = Modifier) {
+    var focused by remember { mutableStateOf(false) }
+    val scale by animateFloatAsState(
+        targetValue = if (focused) 1.12f else 1f,
+        animationSpec = spring(dampingRatio = 0.7f, stiffness = Spring.StiffnessMediumLow),
+        label = "clockScale",
+    )
+    val content by animateColorAsState(if (focused) LumenColors.OnFocused else LumenColors.TextPrimary, tween(160), label = "clockText")
+    LumenText(
+        rememberClockText().first,
+        LumenType.Section,
+        modifier
+            .onFocusChanged { focused = it.isFocused }
+            .tvClickable(onClick = onClick)
+            .graphicsLayer {
+                scaleX = scale
+                scaleY = scale
+            }
+            .liquidGlass(LumenDimens.CapsuleCorner, tint = if (focused) LumenColors.GlassFocused else LumenColors.GlassTintDim)
+            .padding(horizontal = 14.dp, vertical = 6.dp),
+        color = content,
+    )
+}
+
+/** Section heading inside scrolling screens. The default [inset] lines it up with [MenuRow] text. */
+@Composable
+fun SectionTitle(text: String, modifier: Modifier = Modifier, inset: Dp = 20.dp) {
     LumenText(
         text = text,
         style = LumenType.Section,
         color = LumenColors.TextSecondary,
-        modifier = modifier.fillMaxWidth().padding(top = 14.dp, bottom = 2.dp),
+        modifier = modifier.fillMaxWidth().padding(start = inset, top = 14.dp, bottom = 2.dp),
     )
 }

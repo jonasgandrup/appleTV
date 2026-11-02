@@ -4,6 +4,8 @@ data class LauncherSettings(
     /** Ordered package names pinned to the Top Shelf. */
     val favorites: List<String> = emptyList(),
     val favoritesInitialized: Boolean = false,
+    /** The order of the grid below the Top Shelf, as arranged by the user. Apps missing from it follow, in their usual order. */
+    val gridOrder: List<String> = emptyList(),
     val hidden: Set<String> = emptySet(),
     /** Most recent first. Only launches made from Lumen are tracked. */
     val recents: List<String> = emptyList(),
@@ -21,13 +23,14 @@ data class LauncherSettings(
     val screensaverMinutes: Int = 5,
 )
 
-enum class GradientPreset(val displayName: String, val stops: List<Long>, val glow: Long) {
-    Midnight("Midnight", listOf(0xFF05070D, 0xFF0E1526, 0xFF05060A), 0xFF2A3B6B),
-    Aurora("Aurora", listOf(0xFF03100F, 0xFF0B2E33, 0xFF120C24), 0xFF1F7A72),
-    Dusk("Dusk", listOf(0xFF0D0714, 0xFF2A1438, 0xFF1A0A12), 0xFF8A3D6B),
-    Ember("Ember", listOf(0xFF0E0606, 0xFF2E120C, 0xFF0A0505), 0xFF9C4A22),
-    Ocean("Ocean", listOf(0xFF020A14, 0xFF07264A, 0xFF030A14), 0xFF1E5FA8),
-    Graphite("Graphite", listOf(0xFF0A0A0B, 0xFF1C1C1F, 0xFF080809), 0xFF4A4A52),
+enum class GradientPreset(val displayName: String, val stops: List<Long>, val glow: Long, val accent: Long) {
+    Lagoon("Lagoon", listOf(0xFF071230, 0xFF0C2C63, 0xFF0B0E2E), 0xFF2F9BFF, 0xFF7B3FF2),
+    Midnight("Midnight", listOf(0xFF05070D, 0xFF0E1526, 0xFF05060A), 0xFF2A3B6B, 0xFF1B2A5C),
+    Aurora("Aurora", listOf(0xFF03100F, 0xFF0B2E33, 0xFF120C24), 0xFF1F9A8E, 0xFF5B2A86),
+    Dusk("Dusk", listOf(0xFF0D0714, 0xFF2A1438, 0xFF1A0A12), 0xFFB04A86, 0xFFC8603C),
+    Ember("Ember", listOf(0xFF0E0606, 0xFF2E120C, 0xFF0A0505), 0xFFC4582A, 0xFF8E1F2E),
+    Ocean("Ocean", listOf(0xFF020A14, 0xFF07264A, 0xFF030A14), 0xFF1E6FC8, 0xFF0F8FA8),
+    Graphite("Graphite", listOf(0xFF0A0A0B, 0xFF1C1C1F, 0xFF080809), 0xFF55555E, 0xFF35353C),
 }
 
 sealed interface Wallpaper {
@@ -35,7 +38,7 @@ sealed interface Wallpaper {
     data class Image(val path: String) : Wallpaper
 
     companion object {
-        val Default: Wallpaper = Gradient(GradientPreset.Midnight)
+        val Default: Wallpaper = Gradient(GradientPreset.Lagoon)
 
         internal fun decode(raw: String?): Wallpaper = when {
             raw == null -> Default

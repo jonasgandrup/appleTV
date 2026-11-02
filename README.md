@@ -1,8 +1,8 @@
-# Lumen — a minimalist TV launcher for Chromecast with Google TV
+# Atrium — a minimalist TV launcher for Chromecast with Google TV
 
-Lumen replaces the Google TV home screen with a calm, cinematic one: a dark backdrop, a large
-featured area that follows focus, a Top Shelf of pinned apps, recently used apps, and a clean
-grid of everything else. No ads, no recommendations, no rows you didn't ask for.
+Atrium replaces the Google TV home screen with one modelled on Apple TV's: a full-screen stage lit
+in the focused app's color, a dock of six apps on dim glass, a grid of everything else below, and a
+Control Center behind the clock. No ads, no recommendations, no rows you didn't ask for.
 
 Built with Kotlin and Jetpack Compose, designed for the D-pad remote first.
 
@@ -12,20 +12,22 @@ Built with Kotlin and Jetpack Compose, designed for the D-pad remote first.
 |---|---|
 | **App discovery** | Finds every TV (leanback) app; non-TV phone apps can be turned on in Settings. Updates live when apps are installed or removed. |
 | **Top Shelf** | Pinned apps. Seeded on first run with popular streaming apps you have installed. |
-| **Featured area** | Shows the focused app's name over a wash of its colors. Collapses when you browse further down, like tvOS. |
-| **App grid** | One continuous grid of everything else below the Top Shelf, ending with a Settings tile, like tvOS. Every tile shares one 16:9 frame: the app's banner, or a card built from its icon. |
-| **Motion & sound** | Tiles lift, catch a sweep of light and lean into D-pad presses; apps zoom open out of their tile. Soft navigation clicks, which can be turned off. |
+| **Stage** | Fills the screen with the focused app's own color, with its name at the top left. Falls back to your wallpaper for black and white brands. |
+| **Control Center** | Press Up from the dock to reach the clock, then Select: a glass panel with the time, date, Screen Saver and Settings. |
+| **App grid** | tvOS's six-column grid and 5:3 tiles below the dock, ending with a Settings tile. Back returns to the dock. Every tile shares one frame: the app's banner, or a card built from its icon. |
+| **Liquid glass** | Floating glass panels with lit rims and soft highlights. Frost comes from images blurred once on the CPU rather than a live blur, and the backdrop is baked into one bitmap, to spare the Chromecast's GPU. |
+| **Motion & sound** | After a few quiet seconds the focused tile expands and sways while the rest dim, as on tvOS. Tiles lift, catch a sweep of light and lean into D-pad presses; apps zoom open out of their tile. Soft navigation clicks, which can be turned off. |
 | **Screensaver** | After a few idle minutes on the home screen: slowly drifting wallpaper (your photos, or the gradients) with a large clock that changes sides to protect OLED panels. |
 | **Remote control** | Every element is reachable with the D-pad. Select opens an app; **hold Select** for options (pin, reorder, hide, app info). Rows remember where you were. Home while on the home screen jumps back to the top. |
 | **Settings** | Wallpaper, ambient backdrop, clock, screensaver, navigation sounds, non-TV apps, hidden apps, Home-button behavior, a shortcut to Android Settings. |
-| **Wallpapers** | Six built-in gradients, or your own photos (pushed over ADB or imported with the system picker if your device has one). |
-| **Home integration** | Registered as a HOME app, plus an optional accessibility service that makes the remote's Home button open Lumen on Google TV. See [docs/HOME_BUTTON.md](docs/HOME_BUTTON.md). |
+| **Wallpapers** | Seven built-in gradients, or your own photos (pushed over ADB or imported with the system picker if your device has one). |
+| **Home integration** | Registered as a HOME app, plus an optional accessibility service that makes the remote's Home button open Atrium on Google TV. See [docs/HOME_BUTTON.md](docs/HOME_BUTTON.md). |
 
 ## Project structure
 
 ```
 app/                  Activity, HOME intent filters, navigation between screens, dependency wiring
-core/designsystem/    Colors, type, spacing, focus-aware components (AppTile, MenuRow, …), wallpaper rendering
+core/designsystem/    Colors, type, spacing, liquid glass, focus-aware components (AppTile, MenuRow, …), wallpaper rendering
 core/apps/            App discovery (PackageManager), icon/banner rasterizing, launching
 core/settings/        DataStore-backed preferences, wallpaper model and library
 core/system/          Home-button override (accessibility service), shortcuts into system screens
@@ -69,31 +71,34 @@ the debug key for easy sideloading; use your own signing config before sharing t
 
 1. **Enable Developer options:** Settings → System → About → select **Android TV OS build** seven
    times until it says you're a developer.
-2. **Enable debugging:** Settings → System → Developer options → turn on **USB debugging**.
-   On Chromecast with Google TV this also enables network ADB.
-   (On Google TV Streamer and other Android 14 devices, use **Wireless debugging** and
-   `adb pair <ip>:<pairing-port>` first.)
-3. **Find the IP address:** Settings → Network & Internet → your Wi-Fi network.
-4. **Connect** from your computer (same network):
+2. **Enable debugging:** Settings → System → Developer options → turn on **USB debugging**, then
+   **Wireless debugging**. Open *Wireless debugging* → **Pair device with pairing code** and keep
+   that screen open. Android 14 devices need this, including a Chromecast with Google TV that has
+   updated to it. On older software, USB debugging alone opens port 5555; skip the pairing and
+   connect to that port.
+3. **Find the addresses:** the Wireless debugging screens show the IP address and port for pairing,
+   and a different port for connecting. The connecting port can change after a reboot.
+4. **Pair and connect** from your computer (same network):
    ```sh
-   adb connect 192.168.1.50:5555
+   adb pair 192.168.1.50:<pairing-port>     # asks for the 6-digit code
+   adb connect 192.168.1.50:<connect-port>
    ```
-   Approve the **Allow USB debugging?** prompt on the TV (tick *Always allow*). Check with
-   `adb devices`; it should say `device`, not `unauthorized`.
+   Check with `adb devices`; it should say `device`, not `unauthorized`. If these fail with a
+   connection error while the TV is clearly reachable, restart adb with `adb kill-server` and retry.
 5. **Install and open:**
    ```sh
    adb install -r app/build/outputs/apk/release/app-release.apk
    adb shell am start -n app.lumen.launcher/.MainActivity
    ```
-   Lumen also appears in the Google TV apps list.
+   Atrium also appears in the Google TV apps list.
 
-### Make the Home button open Lumen
+### Make the Home button open Atrium
 
-Google TV has no setting to change the default home app. Lumen includes an accessibility
-service that brings Lumen back whenever the Google TV home appears. To turn it on:
+Google TV has no setting to change the default home app. Atrium includes an accessibility
+service that brings Atrium back whenever the Google TV home appears. To turn it on:
 
-- **On the TV:** Lumen → Settings → *Home Button Service* → turn on **Lumen Home Button**.
-  (Or Settings → System → Accessibility → Lumen Home Button.)
+- **On the TV:** Atrium → Settings → *Home Button Service* → turn on **Atrium Home Button**.
+  (Or Settings → System → Accessibility → Atrium Home Button.)
 - **Or over ADB:**
   ```sh
   adb shell settings put secure enabled_accessibility_services app.lumen.launcher/app.lumen.core.system.HomeOverrideService
@@ -101,7 +106,7 @@ service that brings Lumen back whenever the Google TV home appears. To turn it o
   ```
   This **replaces** the list of enabled accessibility services. If you use others (e.g. Button
   Mapper), first run `adb shell settings get secure enabled_accessibility_services` and append
-  Lumen's entry with a `:` separator.
+  Atrium's entry with a `:` separator.
 
 [docs/HOME_BUTTON.md](docs/HOME_BUTTON.md) covers why this approach was chosen, the
 alternatives, and how to test it.
@@ -117,19 +122,19 @@ looks best.
 
 ## Restore the original Google TV launcher
 
-Lumen never modifies or disables the Google TV launcher by default, so restoring it is simple.
+Atrium never modifies or disables the Google TV launcher by default, so restoring it is simple.
 Start at step 1 and stop when things are back to normal:
 
-1. **Turn off the redirect:** Lumen → Settings → *Open Lumen with Home* → Off.
+1. **Turn off the redirect:** Atrium → Settings → *Open Atrium with Home* → Off.
    Home now goes to Google TV.
-2. **Turn off the service:** Settings → System → Accessibility → Lumen Home Button → Off.
+2. **Turn off the service:** Settings → System → Accessibility → Atrium Home Button → Off.
    Or: `adb shell settings delete secure enabled_accessibility_services`
    (this clears *all* enabled services; re-add any others you use).
-3. **Uninstall Lumen:**
+3. **Uninstall Atrium:**
    ```sh
    adb uninstall app.lumen.launcher
    ```
-   Or Settings → Apps → Lumen → Uninstall. This also removes the service.
+   Or Settings → Apps → Atrium → Uninstall. This also removes the service.
 4. **Only if you followed the advanced "disable Google TV home" route** in
    [docs/HOME_BUTTON.md](docs/HOME_BUTTON.md), re-enable it:
    ```sh
@@ -149,6 +154,6 @@ of the Chromecast) is the last resort and is never needed for the default setup.
   Studio's Device Manager. Use the arrow keys and Enter; hold Enter for options.
 - **Logs:** `adb logcat --pid=$(adb shell pidof app.lumen.launcher)`
 - **Screenshot:** `adb exec-out screencap -p > screen.png`
-- **Reset Lumen's settings:** `adb shell pm clear app.lumen.launcher`
+- **Reset Atrium's settings:** `adb shell pm clear app.lumen.launcher`
 - **Custom font:** drop an `.ttf` into `core/designsystem/src/main/res/font/` and set `Family`
   in `Tokens.kt`; Inter or SF-like fonts fit the design.

@@ -1,17 +1,21 @@
 package app.lumen.core.designsystem
 
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.LinearGradient
+import android.graphics.Paint
+import android.graphics.RadialGradient
+import android.graphics.Shader
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
@@ -21,8 +25,6 @@ import app.lumen.core.settings.Wallpaper
 import app.lumen.core.settings.WallpaperLibrary
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import androidx.compose.ui.draw.drawBehind
-import androidx.compose.ui.geometry.Offset
 
 /** Draws a [Wallpaper] full-bleed, crossfading when it changes. */
 @Composable
@@ -45,21 +47,51 @@ fun WallpaperBackground(wallpaper: Wallpaper, modifier: Modifier = Modifier) {
 
 @Composable
 fun GradientFill(preset: GradientPreset, modifier: Modifier = Modifier) {
-    Box(
-        modifier
-            .background(Brush.linearGradient(preset.stops.map { Color(it) }, start = Offset.Zero, end = Offset.Infinite))
-            .drawBehind {
-                // A soft light source in the upper right, like a stage light behind the shelf.
-                drawRect(
-                    Brush.radialGradient(
-                        listOf(Color(preset.glow).copy(alpha = 0.55f), Color.Transparent),
-                        center = Offset(size.width * 0.85f, size.height * 0.05f),
-                        radius = size.width * 0.7f,
-                    ),
-                )
-            },
-    )
+    val image = remember(preset) { renderGradient(preset).asImageBitmap() }
+    Image(image, contentDescription = null, modifier = modifier, contentScale = ContentScale.FillBounds)
 }
+
+/**
+ * Bakes a gradient once, so drawing it is one stretched bitmap instead of a stack of full-screen
+ * gradient shaders on every frame. The light sources give glass in front of it something to catch.
+ */
+fun renderGradient(preset: GradientPreset): Bitmap {
+    val width = GRADIENT_WIDTH.toFloat()
+    val height = GRADIENT_HEIGHT.toFloat()
+    val bitmap = Bitmap.createBitmap(GRADIENT_WIDTH, GRADIENT_HEIGHT, Bitmap.Config.ARGB_8888)
+    val canvas = Canvas(bitmap)
+    val paint = Paint().apply { isDither = true }
+    paint.shader = LinearGradient(0f, 0f, width, height, preset.stops.map { it.toInt() }.toIntArray(), null, Shader.TileMode.CLAMP)
+    canvas.drawRect(0f, 0f, width, height, paint)
+    // A soft light source in the upper right, like a stage light behind the shelf, and a fainter
+    // one low on the left.
+    paint.shader = radialLight(preset.glow, 0xC0, width * 0.85f, height * 0.05f, width * 0.7f)
+    canvas.drawRect(0f, 0f, width, height, paint)
+    paint.shader = radialLight(preset.accent, 0xA0, width * 0.1f, height * 0.95f, width * 0.6f)
+    canvas.drawRect(0f, 0f, width, height, paint)
+    return bitmap
+}
+
+private fun radialLight(color: Long, alpha: Int, x: Float, y: Float, radius: Float): RadialGradient {
+    val rgb = color.toInt() and 0xFFFFFF
+    return RadialGradient(x, y, radius, (alpha shl 24) or rgb, rgb, Shader.TileMode.CLAMP)
+}
+
+private const val GRADIENT_WIDTH = 480
+private const val GRADIENT_HEIGHT = 270
+
+/** A frosted copy of [wallpaper] to provide as [LocalGlassBackdrop]; null for gradients, which are smooth already. */
+@Composable
+fun rememberFrostedWallpaper(wallpaper: Wallpaper): ImageBitmap? {
+    val image by produceState<ImageBitmap?>(null, wallpaper) {
+        value = (wallpaper as? Wallpaper.Image)?.let {
+            withContext(Dispatchers.IO) { WallpaperLibrary.decode(it.path, FROST_DECODE_WIDTH)?.frosted()?.asImageBitmap() }
+        }
+    }
+    return image
+}
+
+private const val FROST_DECODE_WIDTH = 480
 
 /** Decodes a wallpaper file off the main thread, sized for the screen (or [maxWidth]). */
 @Composable

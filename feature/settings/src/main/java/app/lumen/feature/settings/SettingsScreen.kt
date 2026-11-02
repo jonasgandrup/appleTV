@@ -26,7 +26,9 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -36,16 +38,21 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import app.lumen.core.designsystem.LocalGlassBackdrop
 import app.lumen.core.designsystem.LumenColors
 import app.lumen.core.designsystem.LumenDimens
 import app.lumen.core.designsystem.LumenText
@@ -53,6 +60,8 @@ import app.lumen.core.designsystem.LumenType
 import app.lumen.core.designsystem.MenuRow
 import app.lumen.core.designsystem.SectionTitle
 import app.lumen.core.designsystem.WallpaperBackground
+import app.lumen.core.designsystem.liquidGlass
+import app.lumen.core.designsystem.rememberFrostedWallpaper
 import app.lumen.core.settings.GradientPreset
 import app.lumen.core.settings.LauncherSettings
 import app.lumen.core.settings.Wallpaper
@@ -60,7 +69,7 @@ import app.lumen.core.system.HomeOverride
 import app.lumen.core.system.SystemActions
 
 private enum class SettingsPage(val title: String, val description: String) {
-    Main("Settings", "Make Lumen yours. Changes apply instantly."),
+    Main("Settings", "Make Atrium yours. Changes apply instantly."),
     Wallpaper("Wallpaper", "Pick a background for the home screen. Focus a wallpaper to preview it."),
     HiddenApps("Hidden Apps", "Apps you've hidden from the home screen. Select one to bring it back."),
 }
@@ -78,7 +87,9 @@ fun SettingsScreen(viewModel: SettingsViewModel) {
 
     Box(Modifier.fillMaxSize().background(LumenColors.Background)) {
         WallpaperBackground(preview ?: settings.wallpaper, Modifier.fillMaxSize())
-        Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.6f)))
+        Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.4f)))
+        // The title has no glass behind it, so it needs help staying readable over a busy photo.
+        Box(Modifier.fillMaxSize().background(Brush.horizontalGradient(0f to Color.Black.copy(alpha = 0.55f), 0.45f to Color.Transparent)))
 
         Row(
             Modifier
@@ -91,25 +102,38 @@ fun SettingsScreen(viewModel: SettingsViewModel) {
                 modifier = Modifier.weight(0.4f).fillMaxHeight(),
                 label = "settingsTitle",
             ) { p ->
-                Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.Center) {
-                    LumenText(p.title, LumenType.Display)
-                    Spacer(Modifier.height(12.dp))
-                    LumenText(p.description, LumenType.Body, color = LumenColors.TextSecondary)
+                Column(
+                    Modifier.fillMaxSize(),
+                    verticalArrangement = Arrangement.Center,
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    Image(painterResource(R.drawable.ic_settings_glyph), null, Modifier.size(150.dp))
+                    Spacer(Modifier.height(20.dp))
+                    LumenText(p.title, LumenType.Title)
+                    Spacer(Modifier.height(6.dp))
+                    LumenText(p.description, LumenType.Body, color = LumenColors.TextSecondary, textAlign = TextAlign.Center)
                 }
             }
             Spacer(Modifier.width(40.dp))
-            AnimatedContent(
-                targetState = page,
-                transitionSpec = {
-                    (fadeIn(tween(300)) + slideInHorizontally(tween(300)) { it / 12 }) togetherWith fadeOut(tween(150))
-                },
-                modifier = Modifier.weight(0.6f).fillMaxHeight(),
-                label = "settingsPage",
-            ) { p ->
-                when (p) {
-                    SettingsPage.Main -> MainPage(settings, viewModel, onNavigate = { page = it })
-                    SettingsPage.Wallpaper -> WallpaperPage(settings, viewModel, onPreview = { preview = it })
-                    SettingsPage.HiddenApps -> HiddenAppsPage(viewModel)
+            // Sharp wallpaper around the sheet of glass, frost inside it.
+            CompositionLocalProvider(LocalGlassBackdrop provides rememberFrostedWallpaper(preview ?: settings.wallpaper)) {
+                AnimatedContent(
+                    targetState = page,
+                    transitionSpec = {
+                        (fadeIn(tween(300)) + slideInHorizontally(tween(300)) { it / 12 }) togetherWith fadeOut(tween(150))
+                    },
+                    modifier = Modifier
+                        .weight(0.6f)
+                        .fillMaxHeight()
+                        .liquidGlass(LumenDimens.GlassCorner)
+                        .clip(RoundedCornerShape(LumenDimens.GlassCorner)),
+                    label = "settingsPage",
+                ) { p ->
+                    when (p) {
+                        SettingsPage.Main -> MainPage(settings, viewModel, onNavigate = { page = it })
+                        SettingsPage.Wallpaper -> WallpaperPage(settings, viewModel, onPreview = { preview = it })
+                        SettingsPage.HiddenApps -> HiddenAppsPage(viewModel)
+                    }
                 }
             }
         }
@@ -147,7 +171,7 @@ private fun MainPage(settings: LauncherSettings, viewModel: SettingsViewModel, o
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(vertical = 24.dp),
+        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 20.dp),
         verticalArrangement = Arrangement.spacedBy(2.dp),
     ) {
         item { SectionTitle("Appearance") }
@@ -208,7 +232,7 @@ private fun MainPage(settings: LauncherSettings, viewModel: SettingsViewModel, o
         item { SectionTitle("Home Button") }
         item {
             MenuRow(
-                title = "Open Lumen with Home",
+                title = "Open Atrium with Home",
                 subtitle = "Replace the Google TV home screen when you press Home",
                 value = onOff(settings.homeOverride),
                 onClick = { viewModel.setHomeOverride(!settings.homeOverride) },
@@ -220,7 +244,7 @@ private fun MainPage(settings: LauncherSettings, viewModel: SettingsViewModel, o
                 subtitle = if (serviceEnabled) {
                     "Enabled in Accessibility"
                 } else {
-                    "Required on Google TV. Turn on \"Lumen Home Button\" in Accessibility."
+                    "Required on Google TV. Turn on \"Atrium Home Button\" in Accessibility."
                 },
                 value = if (serviceEnabled) "On" else "Set Up",
                 onClick = { SystemActions.openAccessibilitySettings(context) },
@@ -229,14 +253,14 @@ private fun MainPage(settings: LauncherSettings, viewModel: SettingsViewModel, o
         item {
             MenuRow(
                 title = "Open Google TV Home",
-                subtitle = "Visit the original home screen. Lumen returns after you open another app.",
+                subtitle = "Visit the original home screen. Atrium returns after you open another app.",
                 onClick = { SystemActions.openStockHome(context) },
             )
         }
 
         item { SectionTitle("System") }
         item { MenuRow("Android Settings", { SystemActions.openAndroidSettings(context) }) }
-        item { MenuRow("About Lumen", {}, value = "Version $version") }
+        item { MenuRow("About Atrium", {}, value = "Version $version") }
     }
 }
 
@@ -262,14 +286,14 @@ private fun WallpaperPage(settings: LauncherSettings, viewModel: SettingsViewMod
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(vertical = 24.dp),
+        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 20.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
-        item { SectionTitle("Gradients") }
+        item { SectionTitle("Gradients", inset = 0.dp) }
         item {
             SwatchGrid(presets, offset = 0, settings.wallpaper, first, firstFocusIndex, viewModel::setWallpaper, onPreview)
         }
-        item { SectionTitle("Your Photos") }
+        item { SectionTitle("Your Photos", inset = 0.dp) }
         if (images.isNotEmpty()) {
             item {
                 SwatchGrid(images, offset = presets.size, settings.wallpaper, first, firstFocusIndex, viewModel::setWallpaper, onPreview)
@@ -330,7 +354,7 @@ private fun HiddenAppsPage(viewModel: SettingsViewModel) {
     }
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(vertical = 24.dp),
+        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 20.dp),
         verticalArrangement = Arrangement.spacedBy(2.dp),
     ) {
         items(hidden, key = { it.packageName }) { app ->
