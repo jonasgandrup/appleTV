@@ -16,6 +16,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -33,7 +34,7 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 private enum class Destination { Home, Settings }
 
 @Composable
-fun LumenApp(container: AppContainer, homePresses: Flow<Unit>) {
+fun LumenApp(container: AppContainer, homePresses: Flow<Unit>, controlCenterRequests: MutableSharedFlow<Unit>) {
     var destination by rememberSaveable { mutableStateOf(Destination.Home) }
     // Re-broadcast Home presses to the home screen only once it's showing.
     val homeScreenPresses = remember { MutableSharedFlow<Unit>(extraBufferCapacity = 1) }
@@ -44,7 +45,14 @@ fun LumenApp(container: AppContainer, homePresses: Flow<Unit>) {
         }
     }
 
+    // Control Center lives on the home screen, so a request for it from Settings goes there first.
+    LaunchedEffect(controlCenterRequests) {
+        controlCenterRequests.collect { destination = Destination.Home }
+    }
+
     val settings by container.settings.settings.collectAsStateWithLifecycle(LauncherSettings())
+    // Keeps the home screen's scroll position while Settings is open, so coming back lands where it left off.
+    val saved = rememberSaveableStateHolder()
 
     // A launcher has nowhere to go back to: Back on home does nothing.
     BackHandler(enabled = true) {
@@ -60,15 +68,18 @@ fun LumenApp(container: AppContainer, homePresses: Flow<Unit>) {
             modifier = Modifier.fillMaxSize().background(LumenColors.Background),
             label = "destination",
         ) { target ->
-            when (target) {
-                Destination.Home -> HomeScreen(
-                    viewModel = viewModel(factory = HomeViewModel.factory(container.apps, container.launcher, container.settings, container.wallpapers, container.topShelf)),
-                    homePresses = homeScreenPresses,
-                    onOpenSettings = { destination = Destination.Settings },
-                )
-                Destination.Settings -> SettingsScreen(
-                    viewModel = viewModel(factory = SettingsViewModel.factory(container.settings, container.apps, container.wallpapers)),
-                )
+            saved.SaveableStateProvider(target.name) {
+                when (target) {
+                    Destination.Home -> HomeScreen(
+                        viewModel = viewModel(factory = HomeViewModel.factory(container.apps, container.launcher, container.settings, container.wallpapers, container.topShelf)),
+                        homePresses = homeScreenPresses,
+                        controlCenterRequests = controlCenterRequests,
+                        onOpenSettings = { destination = Destination.Settings },
+                    )
+                    Destination.Settings -> SettingsScreen(
+                        viewModel = viewModel(factory = SettingsViewModel.factory(container.settings, container.apps, container.wallpapers)),
+                    )
+                }
             }
         }
     }

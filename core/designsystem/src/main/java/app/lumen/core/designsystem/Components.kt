@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
@@ -50,11 +51,13 @@ import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
@@ -128,6 +131,13 @@ fun AppTile(
     translucent: Boolean = false,
     /** Picked up in Edit Home Screen. */
     lifted: Boolean = false,
+    width: Dp = LumenDimens.TileWidth,
+    height: Dp = LumenDimens.TileHeight,
+    /** Off for tiles that say what they are some other way. */
+    showLabel: Boolean = true,
+    /** How much focus grows the tile: large tiles grow less, so they stay clear of their neighbors. */
+    focusScale: Float = FOCUS_SCALE,
+    idleFocusScale: Float = IDLE_FOCUS_SCALE,
 ) {
     val idle = LocalFocusIdle.current
     var focused by remember { mutableStateOf(false) }
@@ -172,8 +182,8 @@ fun AppTile(
         targetValue = when {
             lifted -> LIFTED_SCALE
             !focused -> 1f
-            idle -> IDLE_FOCUS_SCALE
-            else -> FOCUS_SCALE
+            idle -> idleFocusScale
+            else -> focusScale
         },
         animationSpec = spring(dampingRatio = 0.7f, stiffness = Spring.StiffnessMediumLow),
         label = "tileScale",
@@ -200,10 +210,10 @@ fun AppTile(
     }
     val shape = RoundedCornerShape(LumenDimens.TileCorner)
 
-    Column(modifier.width(LumenDimens.TileWidth), horizontalAlignment = Alignment.CenterHorizontally) {
+    Column(modifier.width(width), horizontalAlignment = Alignment.CenterHorizontally) {
         Box(
             modifier = tileModifier
-                .size(LumenDimens.TileWidth, LumenDimens.TileHeight)
+                .size(width, height)
                 .onFocusChanged {
                     focused = it.isFocused
                     if (it.isFocused) onFocused()
@@ -280,14 +290,16 @@ fun AppTile(
                 filterQuality = FilterQuality.High,
             )
         }
-        Spacer(Modifier.height(11.dp))
-        LumenText(
-            text = label,
-            style = LumenType.Caption,
-            modifier = Modifier.graphicsLayer { alpha = focusAlpha },
-            maxLines = 1,
-            textAlign = TextAlign.Center,
-        )
+        if (showLabel) {
+            Spacer(Modifier.height(11.dp))
+            LumenText(
+                text = label,
+                style = LumenType.Caption,
+                modifier = Modifier.graphicsLayer { alpha = focusAlpha },
+                maxLines = 1,
+                textAlign = TextAlign.Center,
+            )
+        }
     }
 }
 
@@ -302,7 +314,10 @@ fun MenuRow(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     value: String? = null,
-    subtitle: String? = null,
+    /** Leads to another page, shown as tvOS's chevron after the value. */
+    chevron: Boolean = false,
+    /** A selected choice in a list, shown as tvOS's checkmark. */
+    checked: Boolean = false,
     leading: (@Composable () -> Unit)? = null,
     onFocused: () -> Unit = {},
 ) {
@@ -335,11 +350,10 @@ fun MenuRow(
         horizontalArrangement = Arrangement.spacedBy(14.dp),
     ) {
         leading?.invoke()
-        Column(Modifier.weight(1f)) {
-            LumenText(title, LumenType.Headline, color = content, maxLines = 1)
-            if (subtitle != null) LumenText(subtitle, LumenType.Caption, color = secondary, maxLines = 2)
-        }
+        LumenText(title, LumenType.Headline, Modifier.weight(1f), color = content, maxLines = 1)
         if (value != null) LumenText(value, LumenType.Body, color = secondary, maxLines = 1)
+        if (checked) LumenText("✓", LumenType.Headline, color = content)
+        if (chevron) LumenText("›", LumenType.Headline, color = secondary)
     }
 }
 
@@ -362,9 +376,27 @@ fun rememberClockText(): Pair<String, String> {
     return time to date
 }
 
-/** The little glass pill in the corner of the home screen. Focusable; it opens Control Center. */
+/**
+ * tvOS's profile picture: the initial of [name] on a colored disc, or a generic person when there's
+ * no name. Android lets an app neither read the account's photo nor switch profiles.
+ */
 @Composable
-fun Clock(onClick: () -> Unit, modifier: Modifier = Modifier) {
+fun Avatar(name: String, modifier: Modifier = Modifier, size: Dp = 22.dp) {
+    val initial = name.trim().firstOrNull()?.uppercase()
+    Box(modifier.size(size).background(AvatarColor, CircleShape), contentAlignment = Alignment.Center) {
+        if (initial != null) {
+            LumenText(initial, LumenType.Caption.copy(fontSize = (size.value * 0.56f).sp, lineHeight = (size.value * 0.7f).sp), color = LumenColors.TextPrimary)
+        } else {
+            Image(painterResource(R.drawable.ic_person), null, Modifier.size(size * 0.7f))
+        }
+    }
+}
+
+private val AvatarColor = Color(0xFF5E5CE6)
+
+/** The small glass pill in the corner of the home screen, as on tvOS: the time and [profileName]'s picture. Press Up to reach it; it opens Control Center. */
+@Composable
+fun Clock(onClick: () -> Unit, modifier: Modifier = Modifier, profileName: String = "") {
     var focused by remember { mutableStateOf(false) }
     val scale by animateFloatAsState(
         targetValue = if (focused) 1.12f else 1f,
@@ -372,9 +404,7 @@ fun Clock(onClick: () -> Unit, modifier: Modifier = Modifier) {
         label = "clockScale",
     )
     val content by animateColorAsState(if (focused) LumenColors.OnFocused else LumenColors.TextPrimary, tween(160), label = "clockText")
-    LumenText(
-        rememberClockText().first,
-        LumenType.Section,
+    Row(
         modifier
             .onFocusChanged { focused = it.isFocused }
             .tvClickable(onClick = onClick)
@@ -383,9 +413,13 @@ fun Clock(onClick: () -> Unit, modifier: Modifier = Modifier) {
                 scaleY = scale
             }
             .liquidGlass(LumenDimens.CapsuleCorner, tint = if (focused) LumenColors.GlassFocused else LumenColors.GlassTintDim)
-            .padding(horizontal = 14.dp, vertical = 6.dp),
-        color = content,
-    )
+            .padding(start = 12.dp, end = 5.dp, top = 4.dp, bottom = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        LumenText(rememberClockText().first, LumenType.Body, color = content)
+        Avatar(profileName)
+    }
 }
 
 /** Section heading inside scrolling screens. The default [inset] lines it up with [MenuRow] text. */

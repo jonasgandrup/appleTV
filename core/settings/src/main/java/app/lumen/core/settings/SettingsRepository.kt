@@ -16,6 +16,8 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
+import org.json.JSONArray
+import org.json.JSONObject
 import java.io.IOException
 
 // Top-level delegate: one DataStore per process, shared by the activity and the accessibility service.
@@ -50,6 +52,16 @@ class SettingsRepository(context: Context) {
         }
     }
 
+    /** Saves the arrangement together with its folders, as moving an app in or out of one changes both. */
+    suspend fun saveHome(favorites: List<String>, grid: List<String>, folders: List<AppFolder>) {
+        store.edit {
+            it[Keys.Favorites] = favorites.encodeList()
+            it[Keys.FavoritesInitialized] = true
+            it[Keys.GridOrder] = grid.encodeList()
+            it[Keys.Folders] = folders.encodeFolders()
+        }
+    }
+
     suspend fun setHidden(packageName: String, hidden: Boolean) {
         store.edit {
             val current = it[Keys.Hidden].orEmpty()
@@ -71,6 +83,8 @@ class SettingsRepository(context: Context) {
     suspend fun setHomeOverride(enabled: Boolean) = set(Keys.HomeOverride, enabled)
     suspend fun setNavigationSounds(enabled: Boolean) = set(Keys.NavigationSounds, enabled)
     suspend fun setScreensaverMinutes(minutes: Int) = set(Keys.ScreensaverMinutes, minutes)
+    suspend fun setScreensaverType(type: ScreensaverType) = set(Keys.ScreensaverType, type.name)
+    suspend fun setProfileName(name: String) = set(Keys.ProfileName, name)
 
     private suspend fun <T> set(key: Preferences.Key<T>, value: T) {
         store.edit { it[key] = value }
@@ -89,6 +103,8 @@ class SettingsRepository(context: Context) {
             favorites = this[Keys.Favorites].decodeList(),
             favoritesInitialized = this[Keys.FavoritesInitialized] ?: false,
             gridOrder = this[Keys.GridOrder].decodeList(),
+            folders = this[Keys.Folders].decodeFolders(),
+            profileName = this[Keys.ProfileName].orEmpty(),
             hidden = this[Keys.Hidden].orEmpty(),
             recents = this[Keys.Recents].decodeList(),
             wallpaper = Wallpaper.decode(this[Keys.Wallpaper]),
@@ -98,6 +114,7 @@ class SettingsRepository(context: Context) {
             homeOverride = this[Keys.HomeOverride] ?: defaults.homeOverride,
             navigationSounds = this[Keys.NavigationSounds] ?: defaults.navigationSounds,
             screensaverMinutes = this[Keys.ScreensaverMinutes] ?: defaults.screensaverMinutes,
+            screensaverType = ScreensaverType.entries.find { it.name == this[Keys.ScreensaverType] } ?: defaults.screensaverType,
         )
     }
 
@@ -105,6 +122,8 @@ class SettingsRepository(context: Context) {
         val Favorites = stringPreferencesKey("favorites")
         val FavoritesInitialized = booleanPreferencesKey("favorites_initialized")
         val GridOrder = stringPreferencesKey("grid_order")
+        val Folders = stringPreferencesKey("folders")
+        val ProfileName = stringPreferencesKey("profile_name")
         val Hidden = stringSetPreferencesKey("hidden")
         val Recents = stringPreferencesKey("recents")
         val Wallpaper = stringPreferencesKey("wallpaper")
@@ -114,6 +133,7 @@ class SettingsRepository(context: Context) {
         val HomeOverride = booleanPreferencesKey("home_override")
         val NavigationSounds = booleanPreferencesKey("navigation_sounds")
         val ScreensaverMinutes = intPreferencesKey("screensaver_minutes")
+        val ScreensaverType = stringPreferencesKey("screensaver_type")
     }
 
     private companion object {
@@ -122,5 +142,27 @@ class SettingsRepository(context: Context) {
         // Package names never contain newlines, so a newline-joined string keeps order cheaply.
         fun String?.decodeList(): List<String> = this?.split('\n')?.filter { it.isNotBlank() }.orEmpty()
         fun List<String>.encodeList(): String = joinToString("\n")
+
+        // JSON, since a folder's name can hold any character.
+        fun List<AppFolder>.encodeFolders(): String = JSONArray().also { array ->
+            forEach { folder ->
+                array.put(
+                    JSONObject()
+                        .put("id", folder.id)
+                        .put("name", folder.name)
+                        .put("apps", JSONArray(folder.apps)),
+                )
+            }
+        }.toString()
+
+        fun String?.decodeFolders(): List<AppFolder> {
+            if (this == null) return emptyList()
+            val array = runCatching { JSONArray(this) }.getOrNull() ?: return emptyList()
+            return List(array.length()) { i ->
+                val folder = array.getJSONObject(i)
+                val apps = folder.getJSONArray("apps")
+                AppFolder(folder.getString("id"), folder.getString("name"), List(apps.length()) { apps.getString(it) })
+            }
+        }
     }
 }

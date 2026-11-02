@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.runtime.Composable
@@ -34,7 +35,7 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
-import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
@@ -43,11 +44,14 @@ import androidx.compose.ui.unit.dp
 import app.lumen.core.apps.AppCategory
 import app.lumen.core.apps.AppInfo
 import app.lumen.core.apps.ShelfArt
+import app.lumen.core.apps.ShelfProgram
+import app.lumen.core.designsystem.LiveFrost
 import app.lumen.core.designsystem.LumenColors
 import app.lumen.core.designsystem.LumenDimens
 import app.lumen.core.designsystem.LumenText
 import app.lumen.core.designsystem.LumenType
 import app.lumen.core.designsystem.WallpaperBackground
+import app.lumen.core.designsystem.clearFrosted
 import app.lumen.core.designsystem.renderGradient
 import app.lumen.core.settings.GradientPreset
 import app.lumen.core.settings.Wallpaper
@@ -59,20 +63,20 @@ import kotlinx.coroutines.withContext
 import kotlin.math.roundToInt
 
 /**
- * The name of the focused app, at the top left of the stage, where tvOS puts a show's logo. Below
- * it, the title of the app's featured program when it has one, else its category. It fades
- * through an offscreen layer, so that layer is kept to the size of the text.
+ * What's on the stage, at the top left where tvOS puts a show's logo: the title of the app's
+ * featured program, or the app's own name when it publishes none. It fades through an offscreen
+ * layer, so that layer is kept to the size of the text.
  *
- * When the app has a Watch Next row, that sits at the foot of the stage instead, just above the
- * dock, as a tvOS app's sectioned Top Shelf does.
+ * When the app has a Watch Next row, that sits at the foot of the stage, just above the dock, as
+ * Continue Watching does in Apple's TV app.
  */
 @Composable
-internal fun Hero(app: AppInfo?, shelfArt: ShelfArt?, visible: Boolean, modifier: Modifier = Modifier) {
+internal fun Hero(app: AppInfo?, shelfArt: ShelfArt?, visible: Boolean, onRowFocus: (Boolean) -> Unit, modifier: Modifier = Modifier) {
     val alpha by animateFloatAsState(if (visible) 1f else 0f, tween(if (visible) 450 else 200), label = "heroAlpha")
     Box(modifier) {
         AnimatedContent(
-            targetState = app?.let { HeroText(it, shelfArt?.title?.takeIf { title -> title.isNotBlank() && shelfArt.upNext.isEmpty() }) },
-            contentKey = { it?.app?.packageName },
+            targetState = app?.let { HeroText(it, shelfArt?.title?.takeIf(String::isNotBlank)) },
+            contentKey = { it?.app?.packageName to it?.programTitle },
             transitionSpec = {
                 (fadeIn(tween(420, delayMillis = 60)) + slideInHorizontally(tween(420)) { it / 30 }) togetherWith
                     fadeOut(tween(180)) using null
@@ -86,9 +90,10 @@ internal fun Hero(app: AppInfo?, shelfArt: ShelfArt?, visible: Boolean, modifier
             label = "hero",
         ) { target ->
             if (target != null) {
-                val subtitle = target.programTitle ?: target.app.category.takeIf { it != AppCategory.Other }?.displayName
+                val title = target.programTitle ?: target.app.label
+                val subtitle = target.app.category.takeIf { target.programTitle == null && it != AppCategory.Other }?.displayName
                 Column {
-                    LumenText(target.app.label, LumenType.Display, maxLines = 1)
+                    LumenText(title, if (title.length <= HERO_DISPLAY_LENGTH) LumenType.Display else LumenType.Title, maxLines = 2)
                     if (subtitle != null) {
                         Spacer(Modifier.height(2.dp))
                         LumenText(subtitle, LumenType.Section, color = LumenColors.TextSecondary, maxLines = 1)
@@ -106,13 +111,18 @@ internal fun Hero(app: AppInfo?, shelfArt: ShelfArt?, visible: Boolean, modifier
             modifier = Modifier.align(Alignment.BottomStart).fillMaxWidth(),
             label = "upNext",
         ) { target ->
-            if (target != null) UpNextRow(target.upNext, Modifier.padding(bottom = 4.dp))
+            // Down into the space the list leaves above the dock's glass, so the row sits right over it.
+            if (target != null) {
+                UpNextRow(target.upNext, Modifier.offset(y = LumenDimens.SafeVertical - 6.dp).onFocusChanged { onRowFocus(it.hasFocus) })
+            }
         }
     }
 }
 
 private data class HeroText(val app: AppInfo, val programTitle: String?)
 
+/** Titles longer than this drop a size, so a long one doesn't fill the stage. */
+private const val HERO_DISPLAY_LENGTH = 24
 private val HeroTitleMaxWidth = 560.dp
 
 /**
@@ -145,16 +155,27 @@ private const val SHELF_ART_SETTLE_MS = 250L
 
 /**
  * The full-screen stage behind everything: the focused app's [shelfArt] when it publishes some,
- * otherwise the wallpaper lit in the app's color, plus scrims that keep text legible. [dim]
- * darkens it while browsing below the Top Shelf.
+ * otherwise the wallpaper lit in the app's color, plus scrims that keep text legible. While
+ * browsing [below] the Top Shelf it melts into a frosted copy of itself, as tvOS's does.
  *
  * All of it is baked into one small bitmap per app, off the main thread. Every extra full-screen
  * layer is another pass for the Chromecast's GPU: drawn separately, these held it to 20 fps.
  * A photo wallpaper is too detailed to bake that small, so it stays underneath, untinted.
+ *
+ * Also keeps [frost] matched to the stage, so the glass above it frosts what's really behind it.
  */
 @Composable
-internal fun Backdrop(wallpaper: Wallpaper, app: AppInfo?, shelfArt: ShelfArt?, dim: Float) {
-    val dimAlpha by animateFloatAsState(dim, tween(450), label = "dim")
+internal fun Backdrop(
+    wallpaper: Wallpaper,
+    app: AppInfo?,
+    shelfArt: ShelfArt?,
+    /** A program from the full-screen Top Shelf, which replaces [shelfArt]'s artwork. */
+    program: ShelfProgram?,
+    loadProgram: suspend (ShelfProgram) -> Bitmap?,
+    below: Boolean,
+    frost: LiveFrost,
+) {
+    val belowAmount by animateFloatAsState(if (below) 1f else 0f, tween(450), label = "below")
     val preset = (wallpaper as? Wallpaper.Gradient)?.preset
     val art = app?.art
     val artwork = shelfArt?.takeIf { it.packageName == app?.packageName }
@@ -163,23 +184,30 @@ internal fun Backdrop(wallpaper: Wallpaper, app: AppInfo?, shelfArt: ShelfArt?, 
     val fade = remember { Animatable(1f) }
     // True while an opaque bake hides a photo wallpaper completely, so it needn't be drawn.
     var coversWallpaper by remember { mutableStateOf(false) }
-    LaunchedEffect(preset, art, artwork) {
+    LaunchedEffect(preset, art, artwork, program) {
         val first = current == null
         // Quick presses along the dock restart this effect before anything is baked or faded.
         if (!first) delay(BACKDROP_SETTLE_MS)
-        val next = withContext(Dispatchers.Default) {
-            (artwork?.decodeBackdrop()?.let(::bakeArtwork) ?: bakeBackdrop(preset, art)).asImageBitmap()
+        val (next, nextFrost) = withContext(Dispatchers.Default) {
+            val picture = program?.let { loadProgram(it) } ?: artwork?.decodeBackdrop()
+            val baked = picture?.let { bakeArtwork(it, hasRow = program == null && artwork?.upNext?.isNotEmpty() == true) } ?: bakeBackdrop(preset, art)
+            // A transparent bake has nothing to frost by itself; glass falls back to the wallpaper's frost.
+            baked.asImageBitmap() to baked.takeUnless { it.hasAlpha() }?.clearFrosted()?.asImageBitmap()
         }
         val opaque = !next.hasAlpha
         coversWallpaper = coversWallpaper && opaque
         previous = current
         current = next
+        frost.previous = frost.image
+        frost.image = nextFrost
+        frost.fade = if (first) 1f else 0f
         if (!first) {
             fade.snapTo(0f)
-            fade.animateTo(1f, tween(BACKDROP_FADE_MS))
+            fade.animateTo(1f, tween(BACKDROP_FADE_MS)) { frost.fade = value }
         }
         // One full-screen image per frame from here on.
         previous = null
+        frost.previous = null
         coversWallpaper = opaque
     }
 
@@ -188,12 +216,16 @@ internal fun Backdrop(wallpaper: Wallpaper, app: AppInfo?, shelfArt: ShelfArt?, 
         Spacer(
             Modifier.fillMaxSize().drawBehind {
                 val stretched = IntSize(size.width.roundToInt(), size.height.roundToInt())
-                if (fade.value < 1f) {
-                    // An opaque bake can stay solid underneath; under a transparent one it has to fade out.
-                    previous?.let { drawImage(it, dstSize = stretched, alpha = if (current?.hasAlpha == false) 1f else 1f - fade.value) }
+                val frosted = frost.image
+                // Once fully frosted the sharp stage is hidden, so the GPU is spared it.
+                if (belowAmount < 1f || frosted == null) {
+                    if (fade.value < 1f) {
+                        // An opaque bake can stay solid underneath; under a transparent one it has to fade out.
+                        previous?.let { drawImage(it, dstSize = stretched, alpha = if (current?.hasAlpha == false) 1f else 1f - fade.value) }
+                    }
+                    current?.let { drawImage(it, dstSize = stretched, alpha = fade.value) }
                 }
-                current?.let { drawImage(it, dstSize = stretched, alpha = fade.value) }
-                if (dimAlpha > 0f) drawRect(Color.Black, alpha = dimAlpha)
+                if (belowAmount > 0f) frosted?.let { drawImage(it, dstSize = stretched, alpha = belowAmount) }
             },
         )
     }
@@ -201,20 +233,31 @@ internal fun Backdrop(wallpaper: Wallpaper, app: AppInfo?, shelfArt: ShelfArt?, 
 
 /**
  * The app's artwork, full bleed, under scrims that are heavier than the color stage's: a photo
- * is busier than a gradient behind the title and the dock. Drawn onto [bitmap] itself, which is
- * freshly decoded for this, so a full-screen bitmap is never copied. Opaque. Blocking.
+ * is busier than a gradient behind the title and the dock. With a program row above the dock
+ * ([hasRow]) it fades to near black behind the row, as the art does above Continue Watching in
+ * Apple's TV app. Drawn onto [bitmap] itself, which is freshly decoded for this, so a full-screen
+ * bitmap is never copied. Opaque. Blocking.
  */
-private fun bakeArtwork(bitmap: Bitmap): Bitmap {
+private fun bakeArtwork(bitmap: Bitmap, hasRow: Boolean): Bitmap {
     val canvas = Canvas(bitmap)
     val width = bitmap.width.toFloat()
     val height = bitmap.height.toFloat()
     val scrim = Paint().apply { isDither = true }
-    scrim.shader = LinearGradient(
-        0f, 0f, 0f, height,
-        intArrayOf(0x59000000, 0x00000000, 0x1A000000, 0xB3000000.toInt()),
-        floatArrayOf(0f, 0.35f, 0.55f, 1f),
-        Shader.TileMode.CLAMP,
-    )
+    scrim.shader = if (hasRow) {
+        LinearGradient(
+            0f, 0f, 0f, height,
+            intArrayOf(0x59000000, 0x00000000, 0xC7000000.toInt(), 0xEB000000.toInt()),
+            floatArrayOf(0f, 0.12f, 0.42f, 1f),
+            Shader.TileMode.CLAMP,
+        )
+    } else {
+        LinearGradient(
+            0f, 0f, 0f, height,
+            intArrayOf(0x59000000, 0x00000000, 0x1A000000, 0xB3000000.toInt()),
+            floatArrayOf(0f, 0.35f, 0.55f, 1f),
+            Shader.TileMode.CLAMP,
+        )
+    }
     canvas.drawRect(0f, 0f, width, height, scrim)
     scrim.shader = LinearGradient(
         0f, 0f, width, 0f,

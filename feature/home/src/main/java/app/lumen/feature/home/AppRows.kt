@@ -3,15 +3,19 @@ package app.lumen.feature.home
 import android.app.ActivityOptions
 import android.content.Context
 import android.graphics.Bitmap
+import android.graphics.BitmapShader
 import android.graphics.Canvas
 import android.graphics.LinearGradient
+import android.graphics.Matrix
 import android.graphics.Paint
+import android.graphics.RectF
 import android.graphics.Shader
 import android.os.Bundle
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.VectorConverter
 import androidx.compose.animation.core.VisibilityThreshold
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.PaddingValues
@@ -23,6 +27,7 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -33,6 +38,7 @@ import androidx.compose.ui.composed
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.focusRestorer
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
@@ -64,17 +70,22 @@ internal class TileActions(
     /** Hold on a tile; [Rect] is the tile's bounds in the window, for anchoring the menu beside it. */
     val onOptions: (AppInfo, Rect) -> Unit,
     val onFocused: (AppInfo) -> Unit,
-    /** One requester per app, so focus can follow an app that moved in Edit Home Screen. */
-    val focusFor: (AppInfo) -> FocusRequester,
+    /** One requester per home screen item, so focus can follow one that moved in Edit Home Screen. */
+    val focusFor: (String) -> FocusRequester,
+    val onOpenFolder: (HomeItem.Folder) -> Unit = {},
+    /** Hold on a folder; [Rect] is its bounds in the window. */
+    val onFolderOptions: (HomeItem.Folder, Rect) -> Unit = { _, _ -> },
+    val onFolderFocused: (HomeItem.Folder) -> Unit = {},
 )
 
 /** How far the dock's glass reaches past the tiles on each side. */
 private val ShelfGlassOutset = 20.dp
 
 /**
- * The dock: a horizontally scrolling row on a sheet of dim glass, remembering its focused tile
- * when you come back to it. The tiles stay aligned with the grid below, and slide aside when an
- * app is moved among them.
+ * The dock: tvOS's top row on a sheet of dim glass, remembering its focused tile when you come back
+ * to it. The tiles stay aligned with the grid below, and slide aside when an app is moved among
+ * them. No names here, as on tvOS: the art says which app it is, and the stage above belongs to
+ * what's in it.
  */
 @OptIn(ExperimentalComposeUiApi::class)
 @Composable
@@ -85,13 +96,20 @@ internal fun AppRow(
     lifted: AppInfo? = null,
     firstTileFocus: FocusRequester? = null,
 ) {
+    // The glass's highlight glides along to the app with focus.
+    var focusedIndex by remember { mutableIntStateOf(0) }
+    val light by animateFloatAsState(
+        targetValue = (focusedIndex + 0.5f) / apps.size.coerceAtLeast(1),
+        animationSpec = spring(dampingRatio = 0.75f, stiffness = Spring.StiffnessLow),
+        label = "dockLight",
+    )
     LazyRow(
         modifier = modifier
             .fillMaxWidth()
             .padding(horizontal = LumenDimens.SafeHorizontal - ShelfGlassOutset)
-            .liquidGlass(LumenDimens.GlassCorner, tint = LumenColors.GlassTintDim)
+            .liquidGlass(LumenDimens.GlassCorner, tint = LumenColors.GlassTintDim, lightX = { light })
             .focusRestorer(),
-        contentPadding = PaddingValues(start = ShelfGlassOutset, end = ShelfGlassOutset, top = 14.dp, bottom = 8.dp),
+        contentPadding = PaddingValues(horizontal = ShelfGlassOutset, vertical = LumenDimens.DockInset),
         horizontalArrangement = Arrangement.spacedBy(LumenDimens.TileSpacing),
     ) {
         itemsIndexed(apps, key = { _, app -> app.packageName }) { index, app ->
@@ -99,19 +117,26 @@ internal fun AppRow(
                 app = app,
                 actions = actions,
                 lifted = app.packageName == lifted?.packageName,
+                showLabel = false,
                 modifier = Modifier.animateItem(fadeInSpec = null, fadeOutSpec = null, placementSpec = TileSlide),
-                tileModifier = if (index == 0 && firstTileFocus != null) Modifier.focusRequester(firstTileFocus) else Modifier,
+                tileModifier = Modifier
+                    .onFocusChanged { if (it.isFocused) focusedIndex = index }
+                    .then(if (index == 0 && firstTileFocus != null) Modifier.focusRequester(firstTileFocus) else Modifier),
             )
         }
     }
 }
 
-/** A tile in the home grid: an app, or the Settings tile that ends the grid, as on tvOS. */
+/** A tile in the home grid: an app, a folder, or the Settings tile that ends the grid, as on tvOS. */
 internal sealed interface GridTile {
     val key: Any
 
-    data class App(val app: AppInfo) : GridTile {
-        override val key get() = app.packageName
+    data class App(val item: HomeItem.App) : GridTile {
+        override val key get() = item.key
+    }
+
+    data class Folder(val item: HomeItem.Folder) : GridTile {
+        override val key get() = item.key
     }
 
     data object Settings : GridTile {
@@ -129,7 +154,7 @@ internal fun AppGrid(
     actions: TileActions,
     onOpenSettings: () -> Unit,
     modifier: Modifier = Modifier,
-    lifted: AppInfo? = null,
+    lifted: HomeItem? = null,
     firstTileFocus: FocusRequester? = null,
     settingsFocus: FocusRequester? = null,
 ) {
@@ -143,9 +168,16 @@ internal fun AppGrid(
                     val first = if (index == 0 && firstTileFocus != null) Modifier.focusRequester(firstTileFocus) else Modifier
                     when (tile) {
                         is GridTile.App -> LauncherTile(
-                            app = tile.app,
+                            app = tile.item.app,
                             actions = actions,
-                            lifted = tile.app.packageName == lifted?.packageName,
+                            lifted = tile.key == lifted?.key,
+                            modifier = Modifier.animatePlacement(),
+                            tileModifier = first,
+                        )
+                        is GridTile.Folder -> FolderTile(
+                            folder = tile.item,
+                            actions = actions,
+                            lifted = tile.key == lifted?.key,
                             modifier = Modifier.animatePlacement(),
                             tileModifier = first,
                         )
@@ -201,6 +233,59 @@ private fun Modifier.animatePlacement(): Modifier = composed {
 }
 
 @Composable
+private fun FolderTile(folder: HomeItem.Folder, actions: TileActions, lifted: Boolean, modifier: Modifier, tileModifier: Modifier) {
+    val art = remember(folder.apps) { folderArt(folder.apps) }
+    // Written on every layout pass, read only on hold, so it's a plain holder, not state.
+    val bounds = remember { arrayOf(Rect.Zero) }
+    AppTile(
+        label = folder.folder.name,
+        art = art,
+        onClick = { actions.onOpenFolder(folder) },
+        onLongClick = { actions.onFolderOptions(folder, bounds[0]) },
+        onFocused = { actions.onFolderFocused(folder) },
+        translucent = true,
+        lifted = lifted,
+        modifier = modifier,
+        tileModifier = tileModifier
+            .focusRequester(actions.focusFor(folder.key))
+            .onGloballyPositioned { bounds[0] = it.boundsInRoot() },
+    )
+}
+
+/** A pane of tinted glass with miniatures of the folder's first apps on it, as on tvOS. */
+private fun folderArt(apps: List<AppInfo>): ImageBitmap {
+    val bitmap = Bitmap.createBitmap(SETTINGS_ART_WIDTH, SETTINGS_ART_HEIGHT, Bitmap.Config.ARGB_8888)
+    val canvas = Canvas(bitmap)
+    val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
+    paint.shader = LinearGradient(0f, 0f, 0f, SETTINGS_ART_HEIGHT.toFloat(), 0x59FFFFFF, 0x1FFFFFFF, Shader.TileMode.CLAMP)
+    canvas.drawRect(0f, 0f, SETTINGS_ART_WIDTH.toFloat(), SETTINGS_ART_HEIGHT.toFloat(), paint)
+    paint.shader = null
+    val gap = SETTINGS_ART_WIDTH * 0.05f
+    val width = (SETTINGS_ART_WIDTH - gap * (FOLDER_COLUMNS + 1)) / FOLDER_COLUMNS
+    val height = width * LumenDimens.TileHeight.value / LumenDimens.TileWidth.value
+    val top = (SETTINGS_ART_HEIGHT - height * FOLDER_ROWS - gap * (FOLDER_ROWS - 1)) / 2
+    val corner = width * 0.11f
+    apps.take(FOLDER_COLUMNS * FOLDER_ROWS).forEachIndexed { i, app ->
+        val left = gap + (i % FOLDER_COLUMNS) * (width + gap)
+        val y = top + (i / FOLDER_COLUMNS) * (height + gap)
+        val rect = RectF(left, y, left + width, y + height)
+        paint.shader = BitmapShader(app.art, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP).apply {
+            setLocalMatrix(
+                Matrix().apply {
+                    setScale(width / app.art.width, height / app.art.height)
+                    postTranslate(left, y)
+                },
+            )
+        }
+        canvas.drawRoundRect(rect, corner, corner, paint)
+    }
+    return bitmap.asImageBitmap()
+}
+
+private const val FOLDER_COLUMNS = 3
+private const val FOLDER_ROWS = 2
+
+@Composable
 private fun SettingsTile(onClick: () -> Unit, modifier: Modifier, tileModifier: Modifier) {
     val context = LocalContext.current
     val art = remember { settingsArt(context) }
@@ -228,7 +313,7 @@ private const val SETTINGS_ART_WIDTH = 480
 private const val SETTINGS_ART_HEIGHT = 270
 
 @Composable
-private fun LauncherTile(app: AppInfo, actions: TileActions, lifted: Boolean, modifier: Modifier, tileModifier: Modifier) {
+private fun LauncherTile(app: AppInfo, actions: TileActions, lifted: Boolean, modifier: Modifier, tileModifier: Modifier, showLabel: Boolean = true) {
     val art = remember(app.art) { app.art.asImageBitmap() }
     val view = LocalView.current
     // Written on every layout pass, read only on click, so it's a plain holder, not state.
@@ -245,9 +330,10 @@ private fun LauncherTile(app: AppInfo, actions: TileActions, lifted: Boolean, mo
         onLongClick = { actions.onOptions(app, bounds[0]) },
         onFocused = { actions.onFocused(app) },
         lifted = lifted,
+        showLabel = showLabel,
         modifier = modifier,
         tileModifier = tileModifier
-            .focusRequester(actions.focusFor(app))
+            .focusRequester(actions.focusFor(app.packageName))
             .onGloballyPositioned { bounds[0] = it.boundsInRoot() },
     )
 }

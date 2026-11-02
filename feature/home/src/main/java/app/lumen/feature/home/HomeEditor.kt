@@ -4,22 +4,21 @@ import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
-import app.lumen.core.apps.AppInfo
 import app.lumen.core.designsystem.LumenDimens
 
 /**
- * Edit Home Screen, as on tvOS: one app is lifted and follows the remote through the dock and the
- * grid, the others making room, until Select drops it. The arrangement lives here while the app
- * moves and is saved once, on drop, so each press answers instantly.
+ * Edit Home Screen, as on tvOS: one app or folder is lifted and follows the remote through the dock
+ * and the grid, the others making room, until Select drops it. Folders stay in the grid. The
+ * arrangement lives here while it moves and is saved once, on drop, so each press answers instantly.
  */
 @Stable
 internal class HomeEditor {
-    /** The lifted app; null when not editing. */
-    var lifted by mutableStateOf<AppInfo?>(null)
+    /** What's lifted; null when not editing. */
+    var lifted by mutableStateOf<HomeItem?>(null)
         private set
-    var dock by mutableStateOf(emptyList<AppInfo>())
+    var dock by mutableStateOf(emptyList<HomeItem>())
         private set
-    var grid by mutableStateOf(emptyList<AppInfo>())
+    var grid by mutableStateOf(emptyList<HomeItem>())
         private set
 
     /** Dropped, with the arrangement still showing from here until the saved one comes back. */
@@ -31,15 +30,15 @@ internal class HomeEditor {
     /** Whether the home screen should show [dock] and [grid] rather than the saved arrangement. */
     val active: Boolean get() = editing || settling
 
-    fun start(app: AppInfo, dock: List<AppInfo>, grid: List<AppInfo>) {
+    fun start(item: HomeItem, dock: List<HomeItem>, grid: List<HomeItem>) {
         this.dock = dock
         this.grid = grid
         settling = false
-        lifted = app
+        lifted = item
     }
 
     /** Ends editing and hands back the arrangement to save. */
-    fun drop(): Pair<List<AppInfo>, List<AppInfo>> {
+    fun drop(): Pair<List<HomeItem>, List<HomeItem>> {
         lifted = null
         settling = true
         return dock to grid
@@ -50,20 +49,19 @@ internal class HomeEditor {
         settling = false
     }
 
-    fun matches(savedDock: List<AppInfo>, savedGrid: List<AppInfo>): Boolean =
-        savedDock.map { it.packageName } == dock.map { it.packageName } &&
-            savedGrid.map { it.packageName } == grid.map { it.packageName }
+    fun matches(savedDock: List<HomeItem>, savedGrid: List<HomeItem>): Boolean =
+        savedDock.map { it.key } == dock.map { it.key } && savedGrid.map { it.key } == grid.map { it.key }
 
-    /** Moves the lifted app one step toward [direction]. False when it's already against an edge. */
+    /** Moves the lifted item one step toward [direction]. False when it's already against an edge. */
     fun move(direction: Direction): Boolean {
-        val app = lifted ?: return false
-        val inDock = dock.indexOf(app)
-        if (inDock >= 0) return moveInDock(app, inDock, direction)
-        val inGrid = grid.indexOf(app)
-        return inGrid >= 0 && moveInGrid(app, inGrid, direction)
+        val item = lifted ?: return false
+        val inDock = dock.indexOfFirst { it.key == item.key }
+        if (inDock >= 0) return moveInDock(item, inDock, direction)
+        val inGrid = grid.indexOfFirst { it.key == item.key }
+        return inGrid >= 0 && moveInGrid(item, inGrid, direction)
     }
 
-    private fun moveInDock(app: AppInfo, index: Int, direction: Direction): Boolean = when (direction) {
+    private fun moveInDock(app: HomeItem, index: Int, direction: Direction): Boolean = when (direction) {
         Direction.Left -> index > 0 && reorder(dock, index, index - 1) { dock = it }
         Direction.Right -> index < dock.lastIndex && reorder(dock, index, index + 1) { dock = it }
         Direction.Up -> false
@@ -75,17 +73,22 @@ internal class HomeEditor {
         }
     }
 
-    private fun moveInGrid(app: AppInfo, index: Int, direction: Direction): Boolean {
+    private fun moveInGrid(app: HomeItem, index: Int, direction: Direction): Boolean {
         val columns = LumenDimens.TilesPerRow
         return when (direction) {
             Direction.Left -> index > 0 && reorder(grid, index, index - 1) { grid = it }
             Direction.Right -> index < grid.lastIndex && reorder(grid, index, index + 1) { grid = it }
             Direction.Up -> if (index >= columns) {
                 reorder(grid, index, index - columns) { grid = it }
+            } else if (app is HomeItem.Folder) {
+                false
             } else {
-                // Up from the first row into the dock, above the column it left.
-                grid = grid - app
-                dock = dock.toMutableList().apply { add(index.coerceAtMost(size), app) }
+                // Up from the first row into the dock, above the column it left. The top row has a
+                // fixed size on tvOS, so a full one hands its last app down in exchange.
+                val newDock = dock.toMutableList().apply { add(index.coerceAtMost(size), app) }
+                val pushedDown = newDock.drop(columns)
+                dock = newDock.take(columns)
+                grid = pushedDown + (grid - app)
                 true
             }
             Direction.Down -> {
@@ -96,7 +99,7 @@ internal class HomeEditor {
         }
     }
 
-    private inline fun reorder(list: List<AppInfo>, from: Int, to: Int, set: (List<AppInfo>) -> Unit): Boolean {
+    private inline fun reorder(list: List<HomeItem>, from: Int, to: Int, set: (List<HomeItem>) -> Unit): Boolean {
         set(list.toMutableList().apply { add(to, removeAt(from)) })
         return true
     }

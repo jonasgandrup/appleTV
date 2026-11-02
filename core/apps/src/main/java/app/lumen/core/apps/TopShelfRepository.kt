@@ -35,6 +35,8 @@ class ShelfArt(
     private val backdrop: ByteArray,
     /** The app's Watch Next row, most recently watched first. Empty when it has none. */
     val upNext: List<UpNextItem>,
+    /** What the app features in its preview channels, best first, for the full-screen Top Shelf. Empty when it has none. */
+    val featured: List<ShelfProgram>,
 ) {
     /**
      * The artwork cropped to 16:9, as wide as the source allows up to [TopShelfRepository.ART_WIDTH],
@@ -54,6 +56,22 @@ class UpNextItem(
     /** Opens the program in its app; null when the app gave none. */
     val intentUri: String?,
 )
+
+/** A program from an app's preview channels. Its artwork is fetched only if it's actually shown. */
+class ShelfProgram(
+    val packageName: String,
+    val title: String,
+    /** Like "S3, E4", when the app said. */
+    val detail: String?,
+    val description: String?,
+    internal val art: List<Uri>,
+    /** Opens the program in its app; null when the app gave none. */
+    val intentUri: String?,
+) {
+    /** The artwork, still compressed, once fetched. */
+    @Volatile
+    internal var backdrop: ByteArray? = null
+}
 
 /**
  * Reads the artwork apps publish to the system TV provider, like tvOS's Top Shelf.
@@ -89,9 +107,22 @@ class TopShelfRepository(context: Context) {
         }
     }
 
+    /** [program]'s artwork for the stage, cropped as [ShelfArt.decodeBackdrop]'s is. Null if it can't be fetched. */
+    suspend fun backdrop(program: ShelfProgram): Bitmap? = withContext(Dispatchers.IO) {
+        val bytes = program.backdrop ?: coroutineScope {
+            program.art
+                .map { uri -> async { runCatching { open(uri).use(InputStream::readBytes) }.getOrNull() } }
+                .awaitAll()
+                .filterNotNull()
+                .maxByOrNull { landscapeWidth(it) ?: 0 }
+        }?.also { program.backdrop = it }
+        bytes?.let { decodeArt(it, ART_WIDTH, ART_HEIGHT, upscale = false) }
+    }
+
     private suspend fun query(packageName: String): ShelfArt? = coroutineScope {
         val watchNext = programs(WATCH_NEXT_URI, packageName, LAST_ENGAGEMENT, MAX_UP_NEXT)
-        val preview = programs(PREVIEW_URI, packageName, WEIGHT, MAX_CANDIDATES)
+        val preview = programs(PREVIEW_URI, packageName, WEIGHT, MAX_FEATURED)
+        Log.d(TAG, "$packageName publishes ${watchNext.size} Watch Next and ${preview.size} preview programs")
         // The backdrop is usually the first Watch Next tile too, so each image is fetched once.
         val downloads = HashMap<Uri, Deferred<ByteArray?>>()
         fun download(uri: Uri) = downloads.getOrPut(uri) {
@@ -110,7 +141,7 @@ class TopShelfRepository(context: Context) {
         }
         // The largest art among a program's poster and thumbnail, since the stage fills the screen.
         var backdrop: Pair<Program, ByteArray>? = null
-        for (program in watchNext.take(MAX_CANDIDATES) + preview) {
+        for (program in watchNext.take(MAX_CANDIDATES) + preview.take(MAX_CANDIDATES)) {
             val sized = program.art.map(::download).awaitAll().mapNotNull { bytes ->
                 bytes?.let { landscapeWidth(it) }?.takeIf { it >= MIN_WIDTH }?.let { bytes to it }
             }
@@ -120,7 +151,12 @@ class TopShelfRepository(context: Context) {
             break
         }
         val items = upNext.awaitAll().filterNotNull()
-        backdrop?.let { (program, bytes) -> ShelfArt(packageName, program.title, bytes, items) }
+        val featured = preview.mapNotNull { program ->
+            program.title?.takeIf(String::isNotBlank)?.let { title ->
+                ShelfProgram(packageName, title, program.episode, program.description, program.art, program.intentUri)
+            }
+        }
+        backdrop?.let { (program, bytes) -> ShelfArt(packageName, program.title, bytes, items, featured) }
     }
 
     private class Program(
@@ -132,6 +168,8 @@ class TopShelfRepository(context: Context) {
         /** 0..1 through the program, or null if it hasn't been started. */
         val progress: Float?,
         val detail: String?,
+        val episode: String?,
+        val description: String?,
     )
 
     /** Up to [limit] programs with landscape art, best first: most recently watched, or highest weighted. */
@@ -140,7 +178,7 @@ class TopShelfRepository(context: Context) {
         val uri = base.buildUpon().appendQueryParameter("package", packageName).build()
         val projection = arrayOf(
             TITLE, POSTER_URI, POSTER_ASPECT, THUMBNAIL_URI, THUMBNAIL_ASPECT, INTENT_URI, POSITION, DURATION,
-            SEASON, EPISODE, rankColumn,
+            SEASON, EPISODE, DESCRIPTION, rankColumn,
         )
         val cursor = context.contentResolver.query(uri, projection, null, null, null) ?: return emptyList()
         return cursor.use { c ->
@@ -151,11 +189,10 @@ class TopShelfRepository(context: Context) {
                     val position = c.longOrZero(POSITION)
                     val duration = c.longOrZero(DURATION)
                     val progress = if (position > 0 && duration > 0) (position.toFloat() / duration).coerceIn(0f, 1f) else null
-                    val detail = listOfNotNull(
-                        episodeLabel(c.stringOrNull(SEASON), c.stringOrNull(EPISODE)),
-                        timeLeft(position, duration),
-                    ).joinToString(" · ").ifEmpty { null }
-                    add(Program(c.stringOrNull(TITLE), art, c.longOrZero(rankColumn), c.stringOrNull(INTENT_URI), progress, detail))
+                    val episode = episodeLabel(c.stringOrNull(SEASON), c.stringOrNull(EPISODE))
+                    val detail = listOfNotNull(episode, timeLeft(position, duration)).joinToString(" · ").ifEmpty { null }
+                    val description = c.stringOrNull(DESCRIPTION)?.takeIf(String::isNotBlank)
+                    add(Program(c.stringOrNull(TITLE), art, c.longOrZero(rankColumn), c.stringOrNull(INTENT_URI), progress, detail, episode, description))
                 }
             }.sortedByDescending { it.rank }.take(limit)
         }
@@ -239,9 +276,9 @@ class TopShelfRepository(context: Context) {
         const val ART_WIDTH = 1920
         const val ART_HEIGHT = 1080
 
-        /** Up Next tiles share the dock's tile shape; this is a little over their focused size in pixels. */
-        const val THUMB_WIDTH = 320
-        const val THUMB_HEIGHT = 192
+        /** Up Next tiles are 16:9, unlike the dock's; this is their focused size in pixels. */
+        const val THUMB_WIDTH = 448
+        const val THUMB_HEIGHT = 252
 
         private const val TAG = "TopShelf"
         private val WATCH_NEXT_URI = WatchNextPrograms.CONTENT_URI
@@ -256,6 +293,7 @@ class TopShelfRepository(context: Context) {
         private const val DURATION = PreviewPrograms.COLUMN_DURATION_MILLIS
         private const val SEASON = PreviewPrograms.COLUMN_SEASON_DISPLAY_NUMBER
         private const val EPISODE = PreviewPrograms.COLUMN_EPISODE_DISPLAY_NUMBER
+        private const val DESCRIPTION = PreviewPrograms.COLUMN_SHORT_DESCRIPTION
         private const val LAST_ENGAGEMENT = WatchNextPrograms.COLUMN_LAST_ENGAGEMENT_TIME_UTC_MILLIS
         private const val WEIGHT = PreviewPrograms.COLUMN_WEIGHT
         /** 16:9, 3:2 and 4:3. Square and portrait art would be cropped to a sliver. */
@@ -268,8 +306,9 @@ class TopShelfRepository(context: Context) {
         private const val MIN_THUMB_WIDTH = 200
         private const val MAX_CANDIDATES = 3
         private const val MAX_UP_NEXT = 8
-        private const val PROGRESS_INSET = 0.06f
-        private const val PROGRESS_HEIGHT = 0.03f
+        private const val MAX_FEATURED = 6
+        private const val PROGRESS_INSET = 0.05f
+        private const val PROGRESS_HEIGHT = 0.024f
         /** A sliver of fill even at the very start, so the bar reads as progress rather than a line. */
         private const val PROGRESS_MIN = 0.04f
         private const val NETWORK_TIMEOUT_MS = 4_000

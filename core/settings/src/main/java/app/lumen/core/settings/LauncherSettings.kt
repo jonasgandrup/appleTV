@@ -1,11 +1,23 @@
 package app.lumen.core.settings
 
+/** What the screen saver shows. */
+enum class ScreensaverType(val displayName: String) {
+    Aerials("Aerials"),
+    Photos("Your Photos"),
+}
+
+/** A folder of apps on the home screen, as on tvOS. [apps] are package names, in order. */
+data class AppFolder(val id: String, val name: String, val apps: List<String>)
+
 data class LauncherSettings(
     /** Ordered package names pinned to the Top Shelf. */
     val favorites: List<String> = emptyList(),
     val favoritesInitialized: Boolean = false,
-    /** The order of the grid below the Top Shelf, as arranged by the user. Apps missing from it follow, in their usual order. */
+    /** The order of the grid below the Top Shelf, as arranged by the user: package names and folder keys. Apps missing from it follow, in their usual order. */
     val gridOrder: List<String> = emptyList(),
+    val folders: List<AppFolder> = emptyList(),
+    /** The user's name, whose initial stands in for tvOS's profile picture. Blank shows a generic person. */
+    val profileName: String = "",
     val hidden: Set<String> = emptySet(),
     /** Most recent first. Only launches made from Lumen are tracked. */
     val recents: List<String> = emptyList(),
@@ -21,6 +33,7 @@ data class LauncherSettings(
     val navigationSounds: Boolean = true,
     /** Minutes idle on the home screen before the screensaver starts; 0 turns it off. */
     val screensaverMinutes: Int = 5,
+    val screensaverType: ScreensaverType = ScreensaverType.Aerials,
 )
 
 enum class GradientPreset(val displayName: String, val stops: List<Long>, val glow: Long, val accent: Long) {

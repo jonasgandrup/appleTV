@@ -1,8 +1,8 @@
 # Atrium — a minimalist TV launcher for Chromecast with Google TV
 
-Atrium replaces the Google TV home screen with one modelled on Apple TV's: a full-screen stage lit
-in the focused app's color, a dock of six apps on dim glass, a grid of everything else below, and a
-Control Center behind the clock. No ads, no recommendations, no rows you didn't ask for.
+Atrium replaces the Google TV home screen with one modelled on Apple TV's: a full-screen stage
+showing what's in the focused app, a top row of six apps on frosted glass, a grid of everything else
+below, and a Control Center behind the clock. No ads, no recommendations, no rows you didn't ask for.
 
 Built with Kotlin and Jetpack Compose, designed for the D-pad remote first.
 
@@ -11,15 +11,18 @@ Built with Kotlin and Jetpack Compose, designed for the D-pad remote first.
 | | |
 |---|---|
 | **App discovery** | Finds every TV (leanback) app; non-TV phone apps can be turned on in Settings. Updates live when apps are installed or removed. |
-| **Top Shelf** | Pinned apps. Seeded on first run with popular streaming apps you have installed. |
-| **Stage** | Fills the screen with the focused app's own color, with its name at the top left. Falls back to your wallpaper for black and white brands. |
-| **Control Center** | Press Up from the dock to reach the clock, then Select: a glass panel with the time, date, Screen Saver and Settings. |
-| **App grid** | tvOS's six-column grid and 5:3 tiles below the dock, ending with a Settings tile. Back returns to the dock. Every tile shares one frame: the app's banner, or a card built from its icon. |
-| **Liquid glass** | Floating glass panels with lit rims and soft highlights. Frost comes from images blurred once on the CPU rather than a live blur, and the backdrop is baked into one bitmap, to spare the Chromecast's GPU. |
+| **Top row** | Six pinned apps, like tvOS's. Seeded on first run with popular streaming apps you have installed. Moving a seventh in hands the last one down to the grid. |
+| **Stage** | The focused app's featured artwork, full bleed, with the program's title at the top left. Apps with no artwork light it in their own color instead, under their name; black and white brands leave your wallpaper showing. |
+| **Up Next** | The app's Watch Next row above the top row, modelled on Continue Watching in Apple's TV app: wide 16:9 tiles with progress bars, and the title, episode and time left on the focused one. |
+| **Full-screen Top Shelf** | Up from the dock (or from Up Next, if the app has it) slides the dock away and shows what the app features, one program at a time, with Play and page dots. Left and Right change program. Only apps that publish preview channels have this; Netflix and HBO Max, for instance, publish only Watch Next. |
+| **Folders** | Hold Select on an app, then Move to: New Folder, an existing folder, the top row or the home screen. Select a folder's name to rename it, as on tvOS. A folder goes away with its last app. |
+| **Control Center** | Press Up to the clock, then Select: loose glass tiles in the corner for Sleep, Wi-Fi, Screen Saver, Sound, Settings, your profile, Search, Accessibility and Android Settings. With the Home Button service on, holding Home opens it too, in place of Google TV's dashboard. Sleep also needs that service. |
+| **App grid** | tvOS's six-column grid and 5:3 tiles below the top row, over a frosted copy of the stage, ending with a Settings tile. Every tile shares one frame: the app's banner, or a card built from its icon. |
+| **Liquid glass** | Glass on controls only, as Apple's guidelines ask: the top row, clock, menus, Control Center and buttons, frosting whatever is really behind them. Edges bend in the color around them, the sheet has a double rim for thickness, and the top row's highlight glides along to the focused app. Frost comes from images blurred once on the CPU rather than a live blur or refraction shader, and the backdrop is baked into one bitmap, to spare the Chromecast's GPU. |
 | **Motion & sound** | After a few quiet seconds the focused tile expands and gently sways, as on tvOS. Tiles lift, catch a sweep of light and lean into D-pad presses; apps zoom open out of their tile. Soft navigation clicks, which can be turned off. |
-| **Screensaver** | After a few idle minutes on the home screen: slowly drifting wallpaper (your photos, or the gradients) with a large clock that changes sides to protect OLED panels. |
-| **Remote control** | Every element is reachable with the D-pad. Select opens an app; **hold Select** for options (pin, reorder, hide, app info). Rows remember where you were. Home while on the home screen jumps back to the top. |
-| **Settings** | Wallpaper, ambient backdrop, clock, screensaver, navigation sounds, non-TV apps, hidden apps, Home-button behavior, a shortcut to Android Settings. |
+| **Screen saver** | After a few idle minutes on the home screen, or with Back on the first app in the top row, as on tvOS: slowly drifting Aerials, original landscapes painted on the device (a scene takes some seconds the first time, then it's cached), or your photos. Up picks a category, Left and Right change picture, Down names it and shows the time, and anything else stops it. |
+| **Remote control** | Every element is reachable with the D-pad. Select opens an app; **hold Select** for options (Edit Home Screen, Move to, hide, delete, app info). Back climbs to the top row from anywhere. Rows remember where you were, and so does the home screen when you come back from Settings. Home while on the home screen jumps back to the top. |
+| **Settings** | A plain list as on tvOS, explaining the focused row under the icon: wallpaper, Top Shelf artwork, clock, screen saver, click sounds, your name (its initial stands in for a profile picture), non-TV apps, hidden apps, Home-button behavior, a shortcut to Android Settings. |
 | **Wallpapers** | Seven built-in gradients, or your own photos (pushed over ADB or imported with the system picker if your device has one). |
 | **Home integration** | Registered as a HOME app, plus an optional accessibility service that makes the remote's Home button open Atrium on Google TV. See [docs/HOME_BUTTON.md](docs/HOME_BUTTON.md). |
 

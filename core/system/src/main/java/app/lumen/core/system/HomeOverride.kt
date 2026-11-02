@@ -48,6 +48,9 @@ object HomeOverride {
     fun serviceComponent(context: Context): String =
         ComponentName(context, HomeOverrideService::class.java).flattenToString()
 
+    /** An intent extra: open Control Center once Lumen is in front, for Home held down. */
+    const val EXTRA_CONTROL_CENTER = "app.lumen.core.system.CONTROL_CENTER"
+
     /** An intent that brings Lumen's home activity to the front. */
     internal fun lumenHomeIntent(context: Context): Intent =
         Intent(Intent.ACTION_MAIN)

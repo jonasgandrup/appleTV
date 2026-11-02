@@ -4,11 +4,16 @@ import android.app.Activity
 import android.content.Context
 import android.content.ContextWrapper
 import android.graphics.Bitmap
+import android.graphics.BitmapShader
+import android.graphics.Matrix
+import android.graphics.Shader
 import android.os.Handler
 import android.os.Looper
 import android.view.PixelCopy
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
@@ -19,24 +24,21 @@ import androidx.compose.ui.composed
 import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.RoundRect
 import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.geometry.toRect
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
-import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.ShaderBrush
+import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.layout.findRootCoordinates
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.Dp
-import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.Dispatchers
@@ -44,13 +46,14 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import kotlin.coroutines.resume
 import kotlin.math.min
-import kotlin.math.roundToInt
 
 /*
- * Liquid glass, tuned for the Chromecast's GPU: a live blur of the screen is too heavy while tiles
- * animate, so nothing here blurs per frame. Glass gets its frost from images blurred once on the
- * CPU, and its liquid look from what's drawn on top: a lit rim, a soft highlight and a light bounce
- * along the bottom edge.
+ * Liquid glass, tuned for the Chromecast's GPU: a live blur or refraction shader is too heavy while
+ * tiles animate, so nothing here blurs per frame. Glass gets its frost from images blurred once on
+ * the CPU. Its liquid look comes from what's drawn over that, each a simple shape: at the edge, where
+ * real glass bends light, bands of the frost pulled from further out, as a lens would; a double rim
+ * giving the sheet thickness; a highlight that can follow what has focus; and a bounce of light along
+ * the bottom edge.
  */
 
 /**
@@ -60,9 +63,29 @@ import kotlin.math.roundToInt
  */
 val LocalGlassBackdrop = staticCompositionLocalOf<ImageBitmap?> { null }
 
-/** A floating sheet of glass behind this element's content. Draws outside its bounds for its shadow. */
-fun Modifier.liquidGlass(corner: Dp, tint: Color = LumenColors.GlassTint): Modifier = composed {
-    val backdrop = LocalGlassBackdrop.current
+/**
+ * Frost of a backdrop that changes while the glass stays put, like the home screen's stage. Read
+ * only while drawing, so a new image repaints glass without recomposing anything.
+ */
+@Stable
+class LiveFrost {
+    var image by mutableStateOf<ImageBitmap?>(null)
+    var previous by mutableStateOf<ImageBitmap?>(null)
+    /** How far [image] has faded in over [previous], 0..1. */
+    var fade by mutableFloatStateOf(1f)
+}
+
+/** Takes over from [LocalGlassBackdrop] whenever it has an image. */
+val LocalLiveFrost = staticCompositionLocalOf<LiveFrost?> { null }
+
+/**
+ * A floating sheet of glass behind this element's content. Draws outside its bounds for its shadow.
+ * [lightX] places its highlight, from 0 at the left to 1 at the right; read while drawing, so it can
+ * animate without recomposing, and the highlight glides over the glass.
+ */
+fun Modifier.liquidGlass(corner: Dp, tint: Color = LumenColors.GlassTint, lightX: (() -> Float)? = null): Modifier = composed {
+    val fixedBackdrop = LocalGlassBackdrop.current
+    val liveFrost = LocalLiveFrost.current
     var origin by remember { mutableStateOf(Offset.Zero) }
     var window by remember { mutableStateOf(IntSize.Zero) }
 
@@ -73,39 +96,99 @@ fun Modifier.liquidGlass(corner: Dp, tint: Color = LumenColors.GlassTint): Modif
         }
         .drawWithCache {
             val radius = min(corner.toPx(), size.minDimension / 2)
-            val outline = Path().apply { addRoundRect(RoundRect(size.toRect(), CornerRadius(radius))) }
-            val highlight = Brush.radialGradient(
-                listOf(Color.White.copy(alpha = 0.1f), Color.Transparent),
-                center = Offset(size.width * 0.15f, 0f),
-                radius = size.width * 0.5f,
+            fun highlight(x: Float) = Brush.radialGradient(
+                listOf(Color.White.copy(alpha = HIGHLIGHT_ALPHA), Color.Transparent),
+                center = Offset(size.width * x, 0f),
+                radius = min(size.width * 0.5f, size.height * 3f),
             )
+            val restingHighlight = highlight(0.15f)
+            val outer = EDGE_OUTER.toPx()
+            val inner = EDGE_INNER.toPx()
+            val thickness = 1.5.dp.toPx()
+            val hasEdge = size.minDimension > outer * 3
             // The tint, plus a light bounce along the bottom edge: one pass over the glass, not two.
             val fill = Brush.verticalGradient(
                 0.6f to tint,
                 1f to Color.White.copy(alpha = 0.07f).compositeOver(tint),
             )
+            val corners = CornerRadius(radius)
+            // A shader inside a rounded rect rather than a bitmap inside a rounded clip, which would
+            // have the GPU build a mask for the glass on every frame.
+            val brushes = HashMap<Pair<ImageBitmap, Float>, ShaderBrush>(6)
+            var brushOrigin = origin
+            /** [image] sliced for this glass. Below a [lens] of 1, it shows what lies further out, drawn inward. */
+            fun brushFor(image: ImageBitmap, lens: Float = 1f): ShaderBrush {
+                // The glass moved, as the dock does when the home screen scrolls, so the frost has to slide under it.
+                if (brushOrigin != origin) {
+                    brushes.clear()
+                    brushOrigin = origin
+                }
+                return brushes.getOrPut(image to lens) {
+                    val shader = BitmapShader(image.asAndroidBitmap(), Shader.TileMode.CLAMP, Shader.TileMode.CLAMP)
+                    shader.setLocalMatrix(
+                        Matrix().apply {
+                            setScale(window.width.toFloat() / image.width, window.height.toFloat() / image.height)
+                            postTranslate(-origin.x, -origin.y)
+                            postScale(lens, lens, size.width / 2, size.height / 2)
+                        },
+                    )
+                    ShaderBrush(shader)
+                }
+            }
             onDrawWithContent {
                 drawGlassShadow(radius)
+                val live = liveFrost?.image
+                val backdrop = live ?: fixedBackdrop
                 if (backdrop != null && window != IntSize.Zero) {
-                    clipPath(outline) {
-                        val scaleX = backdrop.width.toFloat() / window.width
-                        val scaleY = backdrop.height.toFloat() / window.height
-                        drawImage(
-                            backdrop,
-                            srcOffset = IntOffset((origin.x * scaleX).roundToInt(), (origin.y * scaleY).roundToInt()),
-                            srcSize = IntSize((size.width * scaleX).roundToInt(), (size.height * scaleY).roundToInt()),
-                            dstSize = IntSize(size.width.roundToInt(), size.height.roundToInt()),
-                        )
-                        // The window's scrims don't reach the frost, so it would glow without this.
-                        drawRect(Color.Black.copy(alpha = 0.3f))
+                    val fade = if (live != null) liveFrost.fade else 1f
+                    // Solid underneath, so the glass doesn't turn see-through halfway.
+                    if (fade < 1f) liveFrost?.previous?.let { drawRoundRect(brushFor(it), cornerRadius = corners) }
+                    drawRoundRect(brushFor(backdrop), cornerRadius = corners, alpha = fade)
+                    // The window's scrims don't reach the frost, so it would glow without this.
+                    drawRoundRect(Color.Black.copy(alpha = GLASS_DIM), cornerRadius = corners)
+                    if (hasEdge) {
+                        // Where glass curves away, it bends in light from around it. Narrower bands bend it further.
+                        drawEdgeBand(brushFor(backdrop, LENS_OUTER), outer, radius, EDGE_OUTER_ALPHA * fade)
+                        drawEdgeBand(brushFor(backdrop, LENS_INNER), inner, radius, EDGE_INNER_ALPHA * fade)
                     }
                 }
-                drawRoundRect(fill, cornerRadius = CornerRadius(radius))
-                drawRoundRect(highlight, cornerRadius = CornerRadius(radius))
+                drawRoundRect(fill, cornerRadius = corners)
+                drawRoundRect(lightX?.let { highlight(it()) } ?: restingHighlight, cornerRadius = corners)
+                if (hasEdge) {
+                    // A second, fainter rim inside the first gives the sheet some thickness.
+                    drawRoundRect(
+                        Color.White.copy(alpha = 0.07f),
+                        topLeft = Offset(thickness, thickness),
+                        size = Size(size.width - thickness * 2, size.height - thickness * 2),
+                        cornerRadius = CornerRadius(radius - thickness),
+                        style = Stroke(1.dp.toPx()),
+                    )
+                }
                 drawGlassRim(corner)
                 drawContent()
             }
         }
+}
+
+private val EDGE_OUTER = 9.dp
+private val EDGE_INNER = 4.dp
+private const val LENS_OUTER = 0.9f
+private const val LENS_INNER = 0.78f
+private const val EDGE_OUTER_ALPHA = 0.32f
+private const val EDGE_INNER_ALPHA = 0.5f
+private const val GLASS_DIM = 0.2f
+private const val HIGHLIGHT_ALPHA = 0.14f
+
+/** A band of width [width] along the inside of the glass's edge. */
+private fun DrawScope.drawEdgeBand(brush: Brush, width: Float, radius: Float, alpha: Float) {
+    drawRoundRect(
+        brush,
+        topLeft = Offset(width / 2, width / 2),
+        size = Size(size.width - width, size.height - width),
+        cornerRadius = CornerRadius((radius - width / 2).coerceAtLeast(0f)),
+        style = Stroke(width),
+        alpha = alpha,
+    )
 }
 
 /**
@@ -187,10 +270,18 @@ private tailrec fun Context.findActivity(): Activity? = when (this) {
 private const val FROST_WIDTH = 192
 private const val FROST_HEIGHT = 108
 private const val FROST_RADIUS = 7
+private const val CLEAR_FROST_RADIUS = 7
 
 /** This image, shrunk and blurred into frost. Blocking. */
-internal fun Bitmap.frosted(): Bitmap =
+fun Bitmap.frosted(): Bitmap =
     Bitmap.createScaledBitmap(this, FROST_WIDTH, FROST_HEIGHT, true).blurred(FROST_RADIUS)
+
+/**
+ * A lighter frost, for tvOS's clear glass over rich media: what's behind it stays recognizable while
+ * text on it wouldn't, so it's for controls that carry pictures, like the top row. Blocking.
+ */
+fun Bitmap.clearFrosted(): Bitmap =
+    Bitmap.createScaledBitmap(this, FROST_WIDTH * 2, FROST_HEIGHT * 2, true).blurred(CLEAR_FROST_RADIUS)
 
 /**
  * A blurred copy of this bitmap: three box-blur passes, which approximate a Gaussian. Blocking, and

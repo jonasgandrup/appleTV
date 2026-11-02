@@ -9,14 +9,18 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
@@ -28,33 +32,39 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.currentStateAsState
-import app.lumen.core.designsystem.GradientFill
 import app.lumen.core.designsystem.LocalFocusIdle
 import app.lumen.core.designsystem.LumenColors
 import app.lumen.core.designsystem.LumenDimens
 import app.lumen.core.designsystem.LumenText
 import app.lumen.core.designsystem.LumenType
+import app.lumen.core.designsystem.liquidGlass
 import app.lumen.core.designsystem.rememberClockText
-import app.lumen.core.designsystem.rememberWallpaperImage
-import app.lumen.core.settings.GradientPreset
-import app.lumen.core.settings.Wallpaper
+import app.lumen.core.settings.ScreensaverType
+import app.lumen.core.settings.WallpaperLibrary
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.withContext
 
 private const val SLIDE_MS = 40_000
 private const val CROSSFADE_MS = 2_500
+private const val DETAILS_MS = 6_000L
+private const val PHOTO_WIDTH = 1920
 
 /**
  * After this long, Lumen stops holding the screen on and lets the TV's own sleep take over.
@@ -65,17 +75,30 @@ private const val MAX_SCREENSAVER_MS = 30 * 60_000L
 /** How long the remote stays quiet before tiles settle into [LocalFocusIdle]. */
 private const val FOCUS_IDLE_MS = 7_000L
 
+/** What the remote is doing to a running screen saver. */
+@Stable
+private class SaverControls {
+    /** Moves by itself as time passes, and with Left and Right. */
+    var slide by mutableIntStateOf(0)
+    var showDetails by mutableStateOf(true)
+    /** Which entry of the category picker is highlighted; null when it's closed. */
+    var picking by mutableStateOf<Int?>(null)
+}
+
 /**
- * Wraps the home screen and fades in a screensaver after [timeoutMinutes] without input while
- * Lumen is in front. The key that wakes it is swallowed, so waking never opens an app.
+ * Wraps the home screen and fades in a screen saver after [timeoutMinutes] without input while
+ * Lumen is in front. The remote works as on tvOS while it runs: Up picks a category, Left and Right
+ * change picture, Down names what's showing, and anything else stops it. The key that stops it is
+ * swallowed, so waking never opens an app.
  *
  * While the timer runs Lumen holds the screen on, so Google TV's own ambient mode can't start
- * first; it lets go [MAX_SCREENSAVER_MS] into the screensaver.
+ * first; it lets go [MAX_SCREENSAVER_MS] into the screen saver.
  */
 @Composable
 internal fun ScreensaverHost(
     timeoutMinutes: Int,
-    wallpaper: Wallpaper,
+    type: ScreensaverType,
+    onTypeChange: (ScreensaverType) -> Unit,
     loadPhotos: suspend () -> List<String>,
     wake: Flow<Unit>,
     startNow: Flow<Unit>,
@@ -87,10 +110,23 @@ internal fun ScreensaverHost(
     var showing by remember { mutableStateOf(false) }
     var expired by remember { mutableStateOf(false) }
     var swallowKeyUp by remember { mutableStateOf(false) }
-
     var focusIdle by remember { mutableStateOf(false) }
+    val controls = remember { SaverControls() }
+    // Your Photos is on offer only with photos to show.
+    val photos by produceState<List<String>>(emptyList(), showing) { value = loadPhotos() }
+    val categories = remember(photos) {
+        ScreensaverType.entries.filter { it != ScreensaverType.Photos || photos.isNotEmpty() }
+    }
 
-    LaunchedEffect(wake) { wake.collect { inputCount++ } }
+    // Stopped here by whatever stops it, not by the timer restarting below: a quick press of Back
+    // could otherwise start the screen saver, then have it stopped by that same press's restart.
+    fun stop() {
+        showing = false
+        inputCount++
+    }
+
+    LaunchedEffect(wake) { wake.collect { stop() } }
+    LaunchedEffect(resumed) { if (!resumed) showing = false }
     LaunchedEffect(startNow) { startNow.collect { showing = true } }
     LaunchedEffect(resumed, inputCount) {
         focusIdle = false
@@ -98,9 +134,13 @@ internal fun ScreensaverHost(
         delay(FOCUS_IDLE_MS)
         focusIdle = true
     }
+    LaunchedEffect(showing) {
+        if (!showing) return@LaunchedEffect
+        controls.picking = null
+        controls.showDetails = true
+    }
 
     LaunchedEffect(resumed, timeoutMinutes, inputCount) {
-        showing = false
         expired = false
         if (!resumed || timeoutMinutes <= 0) return@LaunchedEffect
         delay(timeoutMinutes * 60_000L)
@@ -116,6 +156,33 @@ internal fun ScreensaverHost(
         onDispose { view.keepScreenOn = false }
     }
 
+    /** The screen saver's answer to a key pressed while it runs. False means it should stop. */
+    fun handleKey(key: Key): Boolean {
+        val picking = controls.picking
+        if (picking != null) {
+            when (key) {
+                Key.DirectionLeft -> controls.picking = (picking - 1).mod(categories.size)
+                Key.DirectionRight -> controls.picking = (picking + 1).mod(categories.size)
+                Key.DirectionCenter, Key.Enter, Key.NumPadEnter -> {
+                    onTypeChange(categories[picking])
+                    controls.slide = 0
+                    controls.picking = null
+                    controls.showDetails = true
+                }
+                else -> controls.picking = null
+            }
+            return true
+        }
+        when (key) {
+            Key.DirectionRight -> controls.slide++
+            Key.DirectionLeft -> controls.slide--
+            Key.DirectionUp -> controls.picking = categories.indexOf(type).coerceAtLeast(0)
+            Key.DirectionDown -> controls.showDetails = !controls.showDetails
+            else -> return false
+        }
+        return true
+    }
+
     Box(
         Modifier
             .fillMaxSize()
@@ -123,7 +190,7 @@ internal fun ScreensaverHost(
                 when {
                     showing && event.type == KeyEventType.KeyDown -> {
                         swallowKeyUp = true
-                        inputCount++
+                        if (!handleKey(event.key)) stop()
                         true
                     }
                     swallowKeyUp && event.type == KeyEventType.KeyUp -> {
@@ -139,49 +206,63 @@ internal fun ScreensaverHost(
     ) {
         CompositionLocalProvider(LocalFocusIdle provides focusIdle) { content() }
         AnimatedVisibility(showing, enter = fadeIn(tween(1_500)), exit = fadeOut(tween(300))) {
-            Screensaver(wallpaper, loadPhotos)
+            Screensaver(type.takeIf { it in categories } ?: ScreensaverType.Aerials, photos, categories, controls)
         }
     }
 }
 
-/**
- * Slowly zooming, drifting slides with a large clock, in the spirit of the tvOS aerials. Shows the
- * user's own wallpaper photos if there are any, otherwise cycles the built-in gradients.
- */
+private class Slide(val index: Int, val image: ImageBitmap?, val title: String?, val subtitle: String?)
+
+/** Slow, drifting pictures, in the spirit of tvOS's Aerials: nothing else on screen until asked for. */
 @Composable
-private fun Screensaver(wallpaper: Wallpaper, loadPhotos: suspend () -> List<String>) {
-    val photos by produceState<List<String>?>(null) { value = loadPhotos() }
-    var slide by remember { mutableIntStateOf(0) }
-    LaunchedEffect(Unit) {
-        while (true) {
-            delay(SLIDE_MS.toLong())
-            slide++
+private fun Screensaver(type: ScreensaverType, photos: List<String>, categories: List<ScreensaverType>, controls: SaverControls) {
+    val context = LocalContext.current
+    var shown by remember { mutableStateOf<Slide?>(null) }
+    // The next picture is ready before it's shown, however long it takes to paint, so nothing flashes black.
+    LaunchedEffect(type, controls.slide, photos) {
+        val index = controls.slide
+        shown = when (type) {
+            ScreensaverType.Aerials -> aerialScene(index).let { Slide(index, aerialImage(context, index), it.title, it.subtitle) }
+            ScreensaverType.Photos -> {
+                val image = withContext(Dispatchers.IO) { WallpaperLibrary.decode(photos[index.mod(photos.size)], PHOTO_WIDTH)?.asImageBitmap() }
+                Slide(index, image, "Your Photos", null)
+            }
+        }
+        delay(SLIDE_MS.toLong())
+        controls.slide = index + 1
+    }
+    // Named briefly when it starts, then it's only the picture, until Down asks again.
+    val showDetails = controls.showDetails
+    LaunchedEffect(showDetails, controls.slide) {
+        if (showDetails) {
+            delay(DETAILS_MS)
+            controls.showDetails = false
         }
     }
-    val firstPreset = (wallpaper as? Wallpaper.Gradient)?.preset?.ordinal ?: 0
 
     Box(Modifier.fillMaxSize().background(LumenColors.Background)) {
-        val list = photos ?: return@Box
-        Crossfade(targetState = slide, animationSpec = tween(CROSSFADE_MS), label = "slide") { index ->
-            KenBurns(reverse = index % 2 == 1) {
-                if (list.isNotEmpty()) {
-                    PhotoSlide(list[index % list.size])
-                } else {
-                    val presets = GradientPreset.entries
-                    GradientFill(presets[(firstPreset + index) % presets.size], Modifier.fillMaxSize())
+        Crossfade(targetState = shown, animationSpec = tween(CROSSFADE_MS), label = "slide") { slide ->
+            val image = slide?.image
+            if (image != null) {
+                KenBurns(reverse = slide.index % 2 == 1) {
+                    Image(image, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
                 }
             }
         }
-        Box(
-            Modifier.fillMaxSize().background(
-                Brush.verticalGradient(0.55f to Color.Transparent, 1f to Color.Black.copy(alpha = 0.6f)),
-            ),
-        )
-        // The clock swaps sides with each slide so nothing stays in one place on the panel.
-        Crossfade(targetState = slide % 2 == 0, animationSpec = tween(CROSSFADE_MS), label = "clockSide") { left ->
-            Box(Modifier.fillMaxSize().padding(horizontal = LumenDimens.SafeHorizontal, vertical = LumenDimens.SafeVertical * 2)) {
-                ScreensaverClock(Modifier.align(if (left) Alignment.BottomStart else Alignment.BottomEnd), alignEnd = !left)
-            }
+        AnimatedVisibility(
+            showDetails && shown != null,
+            enter = fadeIn(tween(500)),
+            exit = fadeOut(tween(800)),
+        ) {
+            Details(shown)
+        }
+        AnimatedVisibility(
+            controls.picking != null,
+            enter = fadeIn(tween(250)),
+            exit = fadeOut(tween(200)),
+            modifier = Modifier.align(Alignment.TopCenter),
+        ) {
+            CategoryPicker(categories, controls.picking ?: 0)
         }
     }
 }
@@ -205,21 +286,46 @@ private fun KenBurns(reverse: Boolean, content: @Composable () -> Unit) {
     ) { content() }
 }
 
+/** What's showing and the time, at the bottom left over a soft shade, as tvOS names an Aerial. */
 @Composable
-private fun PhotoSlide(path: String) {
-    val image = rememberWallpaperImage(path)
-    Box(Modifier.fillMaxSize()) {
-        GradientFill(GradientPreset.Graphite, Modifier.fillMaxSize())
-        if (image != null) Image(image, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+private fun Details(slide: Slide?) {
+    val (time, date) = rememberClockText()
+    Box(
+        Modifier
+            .fillMaxSize()
+            .background(Brush.verticalGradient(0.6f to Color.Transparent, 1f to Color.Black.copy(alpha = 0.55f))),
+    ) {
+        Column(Modifier.align(Alignment.BottomStart).padding(horizontal = LumenDimens.SafeHorizontal, vertical = LumenDimens.SafeVertical)) {
+            slide?.title?.let { LumenText(it, LumenType.Title) }
+            slide?.subtitle?.let { LumenText(it, LumenType.Section, color = LumenColors.TextSecondary) }
+        }
+        Column(
+            Modifier.align(Alignment.BottomEnd).padding(horizontal = LumenDimens.SafeHorizontal, vertical = LumenDimens.SafeVertical),
+            horizontalAlignment = Alignment.End,
+        ) {
+            LumenText(time, LumenType.Title)
+            LumenText(date, LumenType.Section, color = LumenColors.TextSecondary)
+        }
     }
 }
 
+/** Up's row of categories along the top of the screen. It isn't focusable: the host's key handling drives it. */
 @Composable
-private fun ScreensaverClock(modifier: Modifier, alignEnd: Boolean) {
-    val (time, date) = rememberClockText()
-    val align = if (alignEnd) Alignment.End else Alignment.Start
-    Column(modifier, horizontalAlignment = align) {
-        LumenText(time, LumenType.Display.copy(fontSize = 88.sp, lineHeight = 92.sp, fontWeight = FontWeight.Normal, letterSpacing = (-1.5).sp))
-        LumenText(date, LumenType.Headline, color = LumenColors.TextSecondary, modifier = Modifier.padding(start = 4.dp, end = 4.dp))
+private fun CategoryPicker(categories: List<ScreensaverType>, highlighted: Int) {
+    Row(
+        Modifier.padding(top = LumenDimens.SafeVertical),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        categories.forEachIndexed { i, category ->
+            val selected = i == highlighted
+            LumenText(
+                category.displayName,
+                LumenType.Headline,
+                Modifier
+                    .liquidGlass(LumenDimens.CapsuleCorner, tint = if (selected) LumenColors.GlassFocused else LumenColors.GlassTintDim)
+                    .padding(horizontal = 22.dp, vertical = 8.dp),
+                color = if (selected) LumenColors.OnFocused else LumenColors.TextPrimary,
+            )
+        }
     }
 }

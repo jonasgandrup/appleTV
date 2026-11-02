@@ -12,23 +12,30 @@ import java.net.URISyntaxException
  * inside the app rather than handed to a browser. If the app gave no intent, or it no longer
  * resolves, the app opens at its start screen instead. Returns false when neither works.
  */
-fun openUpNext(context: Context, item: UpNextItem, options: Bundle? = null): Boolean {
-    val deepLink = item.intentUri?.let { uri ->
+fun openUpNext(context: Context, item: UpNextItem, options: Bundle? = null): Boolean =
+    openProgram(context, item.packageName, item.intentUri, options)
+
+/** Opens [program] the same way as [openUpNext]. */
+fun openFeatured(context: Context, program: ShelfProgram, options: Bundle? = null): Boolean =
+    openProgram(context, program.packageName, program.intentUri, options)
+
+private fun openProgram(context: Context, packageName: String, intentUri: String?, options: Bundle?): Boolean {
+    val deepLink = intentUri?.let { uri ->
         try {
             Intent.parseUri(uri, Intent.URI_INTENT_SCHEME).apply {
                 // An app's row only opens that app: never another app, nor Atrium itself.
-                if (component?.packageName != item.packageName) component = null
-                setPackage(item.packageName)
+                if (component?.packageName != packageName) component = null
+                setPackage(packageName)
                 selector = null
                 flags = flags and (Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION).inv()
             }
         } catch (e: URISyntaxException) {
-            Log.w(TAG, "Bad intent URI from ${item.packageName}", e)
+            Log.w(TAG, "Bad intent URI from $packageName", e)
             null
         }
     }
     val pm = context.packageManager
-    val fallback = pm.getLeanbackLaunchIntentForPackage(item.packageName) ?: pm.getLaunchIntentForPackage(item.packageName)
+    val fallback = pm.getLeanbackLaunchIntentForPackage(packageName) ?: pm.getLaunchIntentForPackage(packageName)
     for (intent in listOfNotNull(deepLink, fallback)) {
         try {
             context.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK), options)

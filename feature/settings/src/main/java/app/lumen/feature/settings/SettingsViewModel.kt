@@ -9,6 +9,7 @@ import androidx.lifecycle.viewmodel.viewModelFactory
 import app.lumen.core.apps.AppInfo
 import app.lumen.core.apps.AppRepository
 import app.lumen.core.settings.LauncherSettings
+import app.lumen.core.settings.ScreensaverType
 import app.lumen.core.settings.SettingsRepository
 import app.lumen.core.settings.Wallpaper
 import app.lumen.core.settings.WallpaperLibrary
@@ -56,6 +57,8 @@ class SettingsViewModel(
     fun setHomeOverride(enabled: Boolean) = viewModelScope.launch { settingsRepository.setHomeOverride(enabled) }
     fun setNavigationSounds(enabled: Boolean) = viewModelScope.launch { settingsRepository.setNavigationSounds(enabled) }
     fun setScreensaverMinutes(minutes: Int) = viewModelScope.launch { settingsRepository.setScreensaverMinutes(minutes) }
+    fun setScreensaverType(type: ScreensaverType) = viewModelScope.launch { settingsRepository.setScreensaverType(type) }
+    fun setProfileName(name: String) = viewModelScope.launch { settingsRepository.setProfileName(name) }
     fun unhide(app: AppInfo) = viewModelScope.launch { settingsRepository.setHidden(app.packageName, false) }
 
     companion object {

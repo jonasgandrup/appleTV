@@ -47,6 +47,13 @@ object LumenDimens {
     val TileCorner = 14.dp
     const val TilesPerRow = 6
 
+    /** Four 16:9 tiles across the grid's width, with a peek of the next; tvOS's Continue Watching proportions. */
+    val ProgramTileWidth = 205.dp
+    val ProgramTileHeight = 115.dp
+
+    /** The dock's glass around its tiles: tight enough that a focused tile nearly fills it, as on tvOS. */
+    val DockInset = 13.dp
+
     val GlassCorner = 28.dp
     /** Larger than any capsule is tall; glass clamps it to a full pill. */
     val CapsuleCorner = 100.dp
