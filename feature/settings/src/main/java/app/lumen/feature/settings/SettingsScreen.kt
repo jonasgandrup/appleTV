@@ -75,7 +75,7 @@ import app.lumen.core.system.SystemActions
 private enum class SettingsPage(val title: String, val description: String) {
     Main("Settings", "Make Atrium yours. Changes apply instantly."),
     Wallpaper("Wallpaper", "Pick a background for the home screen. Focus a wallpaper to preview it."),
-    ScreenSaver("Screen Saver", "Slowly drifting pictures when the home screen sits idle. While one runs: Up picks a category, Left and Right change picture, Down names it. Back on the first app starts one."),
+    ScreenSaver("Screen Saver", "Looping nature scenes when the home screen sits idle. While one runs: Up picks a category, Left and Right change scene, Down names it. Back on the first app starts one."),
     HiddenApps("Hidden Apps", "Apps you've hidden from the home screen. Select one to bring it back."),
 }
 
@@ -294,7 +294,7 @@ private fun MainPage(
         item {
             SettingsRow(
                 title = "Your Name",
-                hint = "Your initial is your picture next to the clock. Android lets an app neither show your account's photo nor switch profiles.",
+                hint = "Your initial is your picture next to the clock, unless you've added a photo as profile.jpg over ADB. Google doesn't share your account's photo with other apps.",
                 value = settings.profileName.ifBlank { "None" },
                 chevron = true,
                 onClick = { editingName = true },
@@ -383,6 +383,7 @@ private fun ScreenSaverPage(settings: LauncherSettings, viewModel: SettingsViewM
                 modifier = if (current) Modifier.focusRequester(first) else Modifier,
             )
         }
+        item { MenuRow("Show Clock", { viewModel.setScreensaverClock(!settings.screensaverClock) }, value = onOff(settings.screensaverClock)) }
         item { SectionTitle("Start After") }
         items(ScreensaverDelays) { minutes ->
             MenuRow(

@@ -23,6 +23,7 @@ dependencies {
     implementation(platform(libs.compose.bom))
     implementation(libs.bundles.compose)
     implementation(libs.androidx.activity.compose)
+    implementation(libs.androidx.media3.exoplayer)
     implementation(project(":core:apps"))
     implementation(libs.androidx.core.ktx)
     implementation(project(":core:settings"))

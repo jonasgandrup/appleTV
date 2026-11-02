@@ -95,6 +95,8 @@ class HomeViewModel(
         if (launcher.launch(app, options)) viewModelScope.launch { settings.recordLaunch(app.packageName) }
     }
 
+    suspend fun profilePicture(): Bitmap? = wallpapers.profilePicture()
+
     /** The user's wallpaper photos, which the screensaver prefers over the built-in gradients. */
     suspend fun screensaverPhotos(): List<String> = wallpapers.list().map { it.path }
 

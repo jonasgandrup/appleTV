@@ -84,6 +84,7 @@ class SettingsRepository(context: Context) {
     suspend fun setNavigationSounds(enabled: Boolean) = set(Keys.NavigationSounds, enabled)
     suspend fun setScreensaverMinutes(minutes: Int) = set(Keys.ScreensaverMinutes, minutes)
     suspend fun setScreensaverType(type: ScreensaverType) = set(Keys.ScreensaverType, type.name)
+    suspend fun setScreensaverClock(enabled: Boolean) = set(Keys.ScreensaverClock, enabled)
     suspend fun setProfileName(name: String) = set(Keys.ProfileName, name)
 
     private suspend fun <T> set(key: Preferences.Key<T>, value: T) {
@@ -114,6 +115,7 @@ class SettingsRepository(context: Context) {
             homeOverride = this[Keys.HomeOverride] ?: defaults.homeOverride,
             navigationSounds = this[Keys.NavigationSounds] ?: defaults.navigationSounds,
             screensaverMinutes = this[Keys.ScreensaverMinutes] ?: defaults.screensaverMinutes,
+            screensaverClock = this[Keys.ScreensaverClock] ?: defaults.screensaverClock,
             screensaverType = ScreensaverType.entries.find { it.name == this[Keys.ScreensaverType] } ?: defaults.screensaverType,
         )
     }
@@ -134,6 +136,7 @@ class SettingsRepository(context: Context) {
         val NavigationSounds = booleanPreferencesKey("navigation_sounds")
         val ScreensaverMinutes = intPreferencesKey("screensaver_minutes")
         val ScreensaverType = stringPreferencesKey("screensaver_type")
+        val ScreensaverClock = booleanPreferencesKey("screensaver_clock")
     }
 
     private companion object {

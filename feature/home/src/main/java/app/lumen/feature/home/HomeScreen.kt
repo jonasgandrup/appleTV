@@ -26,6 +26,7 @@ import androidx.compose.runtime.State
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -35,6 +36,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
@@ -121,6 +124,7 @@ fun HomeScreen(
     val firstFocus = remember { FocusRequester() }
     val settingsFocus = remember { FocusRequester() }
     val liveFrost = remember { LiveFrost() }
+    val profilePicture by produceState<ImageBitmap?>(null) { value = viewModel.profilePicture()?.asImageBitmap() }
 
     // The hero follows focus, falling back to the first pinned app (and dropping apps that were
     // hidden or uninstalled since they were focused).
@@ -290,6 +294,7 @@ fun HomeScreen(
     ScreensaverHost(
         timeoutMinutes = state.settings.screensaverMinutes,
         type = state.settings.screensaverType,
+        showClock = state.settings.screensaverClock,
         onTypeChange = { viewModel.setScreensaverType(it) },
         loadPhotos = viewModel::screensaverPhotos,
         wake = homePresses,
@@ -452,7 +457,7 @@ fun HomeScreen(
                             // Control Center shows the time in this same spot. Kept in place, so focus can come back to it.
                             .graphicsLayer { alpha = if (controlCenterOpen) 0f else 1f },
                     ) {
-                        Clock(onClick = { controlCenterOpen = true }, profileName = state.settings.profileName)
+                        Clock(onClick = { controlCenterOpen = true }, profileName = state.settings.profileName, profilePicture = profilePicture)
                     }
                 }
 
@@ -472,6 +477,7 @@ fun HomeScreen(
                 if (controlCenterOpen) {
                     ControlCenter(
                         profileName = state.settings.profileName,
+                        profilePicture = profilePicture,
                         sleepReady = HomeOverride.isServiceEnabled(context),
                         actions = ControlCenterActions(
                             // Sleep goes through the Home Button service; without it, this leads to where it's turned on.

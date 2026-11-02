@@ -19,10 +19,10 @@ Built with Kotlin and Jetpack Compose, designed for the D-pad remote first.
 | **Control Center** | Press Up to the clock, then Select: loose glass tiles in the corner for Sleep, Wi-Fi, Screen Saver, Sound, Settings, your profile, Search, Accessibility and Android Settings. With the Home Button service on, holding Home opens it too, in place of Google TV's dashboard. Sleep also needs that service. |
 | **App grid** | tvOS's six-column grid and 5:3 tiles below the top row, over a frosted copy of the stage, ending with a Settings tile. Every tile shares one frame: the app's banner, or a card built from its icon. |
 | **Liquid glass** | Glass on controls only, as Apple's guidelines ask: the top row, clock, menus, Control Center and buttons, frosting whatever is really behind them. Edges bend in the color around them, the sheet has a double rim for thickness, and the top row's highlight glides along to the focused app. Frost comes from images blurred once on the CPU rather than a live blur or refraction shader, and the backdrop is baked into one bitmap, to spare the Chromecast's GPU. |
-| **Motion & sound** | After a few quiet seconds the focused tile expands and gently sways, as on tvOS. Tiles lift, catch a sweep of light and lean into D-pad presses; apps zoom open out of their tile. Soft navigation clicks, which can be turned off. |
-| **Screen saver** | After a few idle minutes on the home screen, or with Back on the first app in the top row, as on tvOS: slowly drifting Aerials, original landscapes painted on the device (a scene takes some seconds the first time, then it's cached), or your photos. Up picks a category, Left and Right change picture, Down names it and shows the time, and anything else stops it. |
+| **Motion & sound** | After a few quiet seconds the focused tile expands and gently sways, as on tvOS. Tiles lift and lean into D-pad presses; apps zoom open out of their tile. Soft navigation clicks, which can be turned off. |
+| **Screen saver** | After a few idle minutes on the home screen, or with Back on the first app in the top row, as on tvOS: Aerials, original nature scenes as perfectly looping video (rendered by `tools/render_aerials.py`, so there's no footage to license), or your photos. The time stays on screen and changes sides with each scene; turn that off in Settings to see it only on Down, as on tvOS. Up picks a category, Left and Right change scene, Down names it, and anything else stops it. |
 | **Remote control** | Every element is reachable with the D-pad. Select opens an app; **hold Select** for options (Edit Home Screen, Move to, hide, delete, app info). Back climbs to the top row from anywhere. Rows remember where you were, and so does the home screen when you come back from Settings. Home while on the home screen jumps back to the top. |
-| **Settings** | A plain list as on tvOS, explaining the focused row under the icon: wallpaper, Top Shelf artwork, clock, screen saver, click sounds, your name (its initial stands in for a profile picture), non-TV apps, hidden apps, Home-button behavior, a shortcut to Android Settings. |
+| **Settings** | A plain list as on tvOS, explaining the focused row under the icon: wallpaper, Top Shelf artwork, clock, screen saver, click sounds, your name (its initial stands in for a profile picture, unless you push a photo as described below), non-TV apps, hidden apps, Home-button behavior, a shortcut to Android Settings. |
 | **Wallpapers** | Seven built-in gradients, or your own photos (pushed over ADB or imported with the system picker if your device has one). |
 | **Home integration** | Registered as a HOME app, plus an optional accessibility service that makes the remote's Home button open Atrium on Google TV. See [docs/HOME_BUTTON.md](docs/HOME_BUTTON.md). |
 
@@ -122,6 +122,16 @@ adb push my-photo.jpg /sdcard/Android/data/app.lumen.launcher/files/wallpapers/
 
 Then pick it in Settings → Wallpaper. JPG, PNG and WebP work; 3840×2160 or 1920×1080
 looks best.
+
+### Add your profile picture
+
+Google doesn't share a signed-in account's photo with other apps, so add your own:
+
+```sh
+adb push me.jpg /sdcard/Android/data/app.lumen.launcher/files/profile.jpg
+```
+
+It appears next to the clock the next time Atrium starts.
 
 ## Restore the original Google TV launcher
 

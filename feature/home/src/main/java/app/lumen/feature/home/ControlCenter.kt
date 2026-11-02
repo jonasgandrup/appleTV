@@ -27,6 +27,7 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextAlign
@@ -66,7 +67,7 @@ private val RoundButtonSize = 52.dp
  * the Home Button service.
  */
 @Composable
-internal fun ControlCenter(actions: ControlCenterActions, profileName: String, sleepReady: Boolean, onDismiss: () -> Unit) {
+internal fun ControlCenter(actions: ControlCenterActions, profileName: String, profilePicture: ImageBitmap?, sleepReady: Boolean, onDismiss: () -> Unit) {
     fun run(action: () -> Unit): () -> Unit = {
         onDismiss()
         action()
@@ -103,7 +104,7 @@ internal fun ControlCenter(actions: ControlCenterActions, profileName: String, s
                 ControlTile("Settings", R.drawable.ic_settings_gear, run(actions.onSettings))
             }
             Row(horizontalArrangement = Arrangement.spacedBy(ColumnGap), verticalAlignment = Alignment.CenterVertically) {
-                RoundButton(run(actions.onProfile)) { Avatar(profileName, size = 34.dp) }
+                RoundButton(run(actions.onProfile)) { Avatar(profileName, picture = profilePicture, size = 34.dp) }
                 RoundButton(run(actions.onSearch)) { color -> RoundGlyph("Search", R.drawable.ic_cc_search, color) }
                 RoundButton(run(actions.onAccessibility)) { color -> RoundGlyph("Accessibility", R.drawable.ic_cc_accessibility, color) }
                 RoundButton(run(actions.onAndroidSettings)) { color -> RoundGlyph("Android Settings", R.drawable.ic_cc_tune, color) }

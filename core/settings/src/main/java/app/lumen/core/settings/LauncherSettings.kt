@@ -34,6 +34,8 @@ data class LauncherSettings(
     /** Minutes idle on the home screen before the screensaver starts; 0 turns it off. */
     val screensaverMinutes: Int = 5,
     val screensaverType: ScreensaverType = ScreensaverType.Aerials,
+    /** Keep the time on the screen saver, rather than only when Down is pressed as on tvOS. */
+    val screensaverClock: Boolean = true,
 )
 
 enum class GradientPreset(val displayName: String, val stops: List<Long>, val glow: Long, val accent: Long) {

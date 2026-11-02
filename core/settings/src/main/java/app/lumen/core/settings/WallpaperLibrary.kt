@@ -21,6 +21,13 @@ class WallpaperLibrary(context: Context) {
     val directory: File
         get() = File(context.getExternalFilesDir(null) ?: context.filesDir, "wallpapers").apply { mkdirs() }
 
+    /** The user's own profile picture, pushed over ADB like a wallpaper. Android gives apps no access to the Google account's. */
+    suspend fun profilePicture(): Bitmap? = withContext(Dispatchers.IO) {
+        File(context.getExternalFilesDir(null) ?: context.filesDir, PROFILE_PICTURE)
+            .takeIf { it.isFile }
+            ?.let { decode(it.path, PROFILE_PICTURE_WIDTH) }
+    }
+
     suspend fun list(): List<File> = withContext(Dispatchers.IO) {
         directory.listFiles { f -> f.isFile && f.extension.lowercase() in EXTENSIONS }
             ?.sortedByDescending { it.lastModified() }
@@ -40,6 +47,8 @@ class WallpaperLibrary(context: Context) {
 
     companion object {
         private val EXTENSIONS = setOf("jpg", "jpeg", "png", "webp")
+        private const val PROFILE_PICTURE = "profile.jpg"
+        private const val PROFILE_PICTURE_WIDTH = 160
 
         /** Decodes [path] subsampled so its width is no larger than needed for [maxWidth]. Blocking. */
         fun decode(path: String, maxWidth: Int): Bitmap? = runCatching {

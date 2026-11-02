@@ -36,6 +36,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
@@ -115,8 +116,8 @@ private const val ROW_FOCUS_MS = 80
 val LocalFocusIdle = compositionLocalOf { false }
 
 /**
- * A tvOS-style app tile with a glass edge: lifts and grows on focus, leans into D-pad presses,
- * catches a sweep of light, and reveals its label underneath. [art] is the app's 16:9 tile artwork.
+ * A tvOS-style app tile with a glass edge: lifts and grows on focus, leans into D-pad presses, and
+ * reveals its label underneath. [art] is the app's 16:9 tile artwork.
  */
 @Composable
 fun AppTile(
@@ -201,13 +202,6 @@ fun AppTile(
         label = "tileElevation",
     )
     val focusAlpha by animateFloatAsState(if (focused) 1f else 0f, tween(220), label = "tileFocus")
-    val sheen = remember { Animatable(0f) }
-    LaunchedEffect(focused) {
-        if (focused) {
-            sheen.snapTo(0f)
-            sheen.animateTo(1f, tween(1100, easing = FastOutSlowInEasing))
-        }
-    }
     val shape = RoundedCornerShape(LumenDimens.TileCorner)
 
     Column(modifier.width(width), horizontalAlignment = Alignment.CenterHorizontally) {
@@ -264,18 +258,6 @@ fun AppTile(
                                     size.height * (-0.1f - tiltY.value * 0.35f),
                                 ),
                                 radius = size.width * 0.75f,
-                            ),
-                        )
-                    }
-                    // A single diagonal sweep of light on focus.
-                    val p = sheen.value
-                    if (p > 0f && p < 1f) {
-                        val x = size.width * (-0.4f + p * 1.8f)
-                        drawRect(
-                            Brush.linearGradient(
-                                listOf(Color.Transparent, Color.White.copy(alpha = 0.22f), Color.Transparent),
-                                start = Offset(x - size.width * 0.25f, 0f),
-                                end = Offset(x + size.width * 0.25f, size.height),
                             ),
                         )
                     }
@@ -377,14 +359,16 @@ fun rememberClockText(): Pair<String, String> {
 }
 
 /**
- * tvOS's profile picture: the initial of [name] on a colored disc, or a generic person when there's
- * no name. Android lets an app neither read the account's photo nor switch profiles.
+ * tvOS's profile picture: [picture] when the user has added one, else the initial of [name], else a
+ * generic person. The signed-in Google account's photo isn't available to other apps.
  */
 @Composable
-fun Avatar(name: String, modifier: Modifier = Modifier, size: Dp = 22.dp) {
+fun Avatar(name: String, modifier: Modifier = Modifier, picture: ImageBitmap? = null, size: Dp = 22.dp) {
     val initial = name.trim().firstOrNull()?.uppercase()
-    Box(modifier.size(size).background(AvatarColor, CircleShape), contentAlignment = Alignment.Center) {
-        if (initial != null) {
+    Box(modifier.size(size).clip(CircleShape).background(AvatarColor), contentAlignment = Alignment.Center) {
+        if (picture != null) {
+            Image(picture, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop, filterQuality = FilterQuality.High)
+        } else if (initial != null) {
             LumenText(initial, LumenType.Caption.copy(fontSize = (size.value * 0.56f).sp, lineHeight = (size.value * 0.7f).sp), color = LumenColors.TextPrimary)
         } else {
             Image(painterResource(R.drawable.ic_person), null, Modifier.size(size * 0.7f))
@@ -392,11 +376,15 @@ fun Avatar(name: String, modifier: Modifier = Modifier, size: Dp = 22.dp) {
     }
 }
 
-private val AvatarColor = Color(0xFF5E5CE6)
+private val AvatarColor = Color(0xFF636366)
 
-/** The small glass pill in the corner of the home screen, as on tvOS: the time and [profileName]'s picture. Press Up to reach it; it opens Control Center. */
+/**
+ * The small glass pill in the corner of the home screen, as on tvOS: the time, and the user's
+ * picture once there's anything personal to show. Press Up to reach it; it opens Control Center.
+ */
 @Composable
-fun Clock(onClick: () -> Unit, modifier: Modifier = Modifier, profileName: String = "") {
+fun Clock(onClick: () -> Unit, modifier: Modifier = Modifier, profileName: String = "", profilePicture: ImageBitmap? = null) {
+    val showAvatar = profilePicture != null || profileName.isNotBlank()
     var focused by remember { mutableStateOf(false) }
     val scale by animateFloatAsState(
         targetValue = if (focused) 1.12f else 1f,
@@ -413,12 +401,12 @@ fun Clock(onClick: () -> Unit, modifier: Modifier = Modifier, profileName: Strin
                 scaleY = scale
             }
             .liquidGlass(LumenDimens.CapsuleCorner, tint = if (focused) LumenColors.GlassFocused else LumenColors.GlassTintDim)
-            .padding(start = 12.dp, end = 5.dp, top = 4.dp, bottom = 4.dp),
+            .padding(start = 12.dp, end = if (showAvatar) 5.dp else 12.dp, top = 4.dp, bottom = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         LumenText(rememberClockText().first, LumenType.Body, color = content)
-        Avatar(profileName)
+        if (showAvatar) Avatar(profileName, picture = profilePicture)
     }
 }
 
