@@ -57,12 +57,17 @@ import kotlinx.coroutines.launch
  * The Top Shelf gone full screen, as Up does on tvOS: the dock slides away, and what the app
  * features fills the screen one program at a time. Left and Right change program, and it moves on
  * by itself after a while, as Apple's carousels do. Down or Back returns to the dock. The programs
- * on either side are fetched ahead with [preload], so moving on brings picture and text together.
+ * on either side are fetched ahead with [preload].
+ *
+ * [shown] is the program whose picture is on screen, which trails [index] while the next one
+ * decodes; the text and Play follow it, so words and picture always match. The title stays small,
+ * since artwork usually carries its own lettering, which a large title would only compete with.
  */
 @Composable
 internal fun FullScreenShelf(
     programs: List<ShelfProgram>,
     index: Int,
+    shown: ShelfProgram?,
     onIndex: (Int) -> Unit,
     playFocus: FocusRequester,
     preload: suspend (ShelfProgram) -> Unit,
@@ -87,18 +92,21 @@ internal fun FullScreenShelf(
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             AnimatedContent(
-                targetState = program,
-                transitionSpec = { fadeIn(tween(350)) togetherWith fadeOut(tween(150)) },
+                targetState = shown,
+                transitionSpec = { fadeIn(tween(350)) togetherWith fadeOut(tween(150)) using null },
+                contentAlignment = Alignment.BottomStart,
                 label = "programText",
-            ) { shown ->
-                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    LumenText(shown.title, if (shown.title.length <= 24) LumenType.Display else LumenType.Title, maxLines = 2)
-                    shown.detail?.let { LumenText(it, LumenType.Section, color = LumenColors.TextSecondary, maxLines = 1) }
-                    shown.description?.let { LumenText(it, LumenType.Body, color = LumenColors.TextSecondary, maxLines = 3) }
+            ) { text ->
+                if (text != null) {
+                    Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                        LumenText(text.title, LumenType.Headline, maxLines = 1)
+                        text.detail?.let { LumenText(it, LumenType.Body, color = LumenColors.TextSecondary, maxLines = 1) }
+                        text.description?.let { LumenText(it, LumenType.Body, color = LumenColors.TextSecondary, maxLines = 2) }
+                    }
                 }
             }
             PlayButton(
-                onClick = { openFeatured(context, program) },
+                onClick = { openFeatured(context, shown ?: program) },
                 modifier = Modifier
                     .focusRequester(playFocus)
                     .onPreviewKeyEvent { event ->

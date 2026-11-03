@@ -18,6 +18,8 @@ import androidx.compose.animation.core.VisibilityThreshold
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.offset
@@ -103,26 +105,31 @@ internal fun AppRow(
         animationSpec = spring(dampingRatio = 0.75f, stiffness = Spring.StiffnessLow),
         label = "dockLight",
     )
-    LazyRow(
-        modifier = modifier
-            .fillMaxWidth()
-            .padding(horizontal = LumenDimens.SafeHorizontal - ShelfGlassOutset)
-            .liquidGlass(LumenDimens.GlassCorner, tint = LumenColors.GlassTintDim, lightX = { light })
-            .focusRestorer(),
-        contentPadding = PaddingValues(horizontal = ShelfGlassOutset, vertical = LumenDimens.DockInset),
-        horizontalArrangement = Arrangement.spacedBy(LumenDimens.TileSpacing),
-    ) {
-        itemsIndexed(apps, key = { _, app -> app.packageName }) { index, app ->
-            LauncherTile(
-                app = app,
-                actions = actions,
-                lifted = app.packageName == lifted?.packageName,
-                showLabel = false,
-                modifier = Modifier.animateItem(fadeInSpec = null, fadeOutSpec = null, placementSpec = TileSlide),
-                tileModifier = Modifier
-                    .onFocusChanged { if (it.isFocused) focusedIndex = index }
-                    .then(if (index == 0 && firstTileFocus != null) Modifier.focusRequester(firstTileFocus) else Modifier),
-            )
+    Box(modifier.fillMaxWidth()) {
+        // Separate from the row, which runs the full width of the screen so it can't cut off a focused tile's shadow.
+        Spacer(
+            Modifier
+                .matchParentSize()
+                .padding(horizontal = LumenDimens.SafeHorizontal - ShelfGlassOutset)
+                .liquidGlass(LumenDimens.GlassCorner, tint = LumenColors.GlassTintDim, lightX = { light }),
+        )
+        LazyRow(
+            modifier = Modifier.fillMaxWidth().focusRestorer(),
+            contentPadding = PaddingValues(horizontal = LumenDimens.SafeHorizontal, vertical = LumenDimens.DockInset),
+            horizontalArrangement = Arrangement.spacedBy(LumenDimens.TileSpacing),
+        ) {
+            itemsIndexed(apps, key = { _, app -> app.packageName }) { index, app ->
+                LauncherTile(
+                    app = app,
+                    actions = actions,
+                    lifted = app.packageName == lifted?.packageName,
+                    showLabel = false,
+                    modifier = Modifier.animateItem(fadeInSpec = null, fadeOutSpec = null, placementSpec = TileSlide),
+                    tileModifier = Modifier
+                        .onFocusChanged { if (it.isFocused) focusedIndex = index }
+                        .then(if (index == 0 && firstTileFocus != null) Modifier.focusRequester(firstTileFocus) else Modifier),
+                )
+            }
         }
     }
 }

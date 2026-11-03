@@ -8,7 +8,7 @@ Atrium replaces the Google TV home screen with one modelled on Apple TV's, inclu
 
 ## The home screen
 
-Move along the top row and the screen fills with artwork from that app. A small arrow shows there's more above.
+Move along the top row and the screen fills with artwork from that app, with nothing else on it. A small arrow shows there's more above.
 
 Press **Up** and the picture opens to full screen, with **Play** and page dots. **Left** and **Right** change program, and it moves on by itself after a while.
 
@@ -18,11 +18,11 @@ Press **Up** and the picture opens to full screen, with **Play** and page dots. 
 
 ![Drops of God in full screen, with its title and a Play button](docs/images/full-screen.jpg)
 
-Apps with no artwork light the screen in their own color instead. Apps that only share small thumbnails, like YouTube, show a row of them above the top row, so nothing gets stretched and blurry.
+Apps with no artwork light the screen in their own color instead. Apps that only share small thumbnails, like YouTube, show a row of them above the top row, so nothing gets stretched and blurry, and the screen takes on the color of the selected thumbnail.
 
 ## Continue Watching
 
-One row with what you're in the middle of across your apps, most recent first, with a progress bar on each tile. Select a tile to pick up where you left off. The row updates when you come back from an app.
+Press **Down** from the top row for one row with what you're in the middle of across your apps, most recent first, with a progress bar on each tile. Select a tile to pick up where you left off. The row updates when you come back from an app.
 
 ![Continue Watching under the top row, with The Gorge selected](docs/images/continue-watching.jpg)
 
@@ -40,7 +40,7 @@ Everything else sits in a grid below, using Apple's six-column layout, over a fr
 
 Press **Up** to reach the clock and then **Select**, or just hold **Home**. Glass tiles float over whatever's on screen, with Sleep, Wi-Fi, Screen Saver, Sound, Settings, Search and more.
 
-![Control Center over Ted Lasso artwork](docs/images/control-center.jpg)
+![Control Center over Ghosted artwork](docs/images/control-center.jpg)
 
 ## Screen saver
 

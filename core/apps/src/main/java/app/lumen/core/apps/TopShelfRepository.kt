@@ -237,7 +237,9 @@ class TopShelfRepository(context: Context) {
             async(Dispatchers.IO) { runCatching { open(uri).use(InputStream::readBytes) }.getOrNull() }
         }
 
-        // The largest art among a program's poster and thumbnail, since the stage fills the screen.
+        // The stage fills the screen, so it takes the largest art among a program's poster and thumbnail.
+        // What the user is in the middle of comes first, passed over only if its art is too soft,
+        // and then the sharpest of a few programs wins.
         var backdrop: Pair<Program, ByteArray>? = null
         var backdropWidth = 0
         for (program in watchNext.take(MAX_CANDIDATES) + preview.take(MAX_CANDIDATES)) {
@@ -246,9 +248,11 @@ class TopShelfRepository(context: Context) {
             }
             val (bytes, width) = sized.maxByOrNull { it.second } ?: continue
             Log.d(TAG, "$packageName stage art ${width}px wide, from ${sized.map { it.second }} (${program.title})")
-            backdrop = program to bytes
-            backdropWidth = width
-            break
+            if (width > backdropWidth) {
+                backdrop = program to bytes
+                backdropWidth = width
+            }
+            if (width >= SHARP_WIDTH) break
         }
         val onlySmallArt = watchNext.isEmpty() && preview.isNotEmpty() && backdropWidth < MIN_FULL_SCREEN_WIDTH
         val recommendations = if (onlySmallArt) {
@@ -452,6 +456,8 @@ class TopShelfRepository(context: Context) {
             PreviewPrograms.ASPECT_RATIO_4_3,
         )
         private const val MIN_WIDTH = 480
+        /** Art this wide is sharp enough for the stage, so there's no need to look further. */
+        private const val SHARP_WIDTH = 1280
         /** Art narrower than this looks soft stretched across the screen, so an app with nothing else shows it as tiles. */
         private const val MIN_FULL_SCREEN_WIDTH = 1000
         private const val MIN_THUMB_WIDTH = 200

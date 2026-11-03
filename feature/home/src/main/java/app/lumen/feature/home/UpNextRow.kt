@@ -45,7 +45,7 @@ import app.lumen.core.designsystem.LumenType
  * and their title, episode and time left only while focused, after the name [appName] gives their
  * app when the row mixes apps. Holding select on a tile asks for [onOptions], with its bounds in the
  * window to anchor a menu to. [firstTile] takes focus when something enters the row for the first
- * time, or when a tile goes away.
+ * time, or when a tile goes away. [onItemFocused] hears which tile has focus.
  */
 @OptIn(ExperimentalComposeUiApi::class)
 @Composable
@@ -56,6 +56,7 @@ internal fun UpNextRow(
     onOptions: (UpNextItem, Rect) -> Unit,
     modifier: Modifier = Modifier,
     appName: (String) -> String? = { null },
+    onItemFocused: (UpNextItem) -> Unit = {},
 ) {
     Column(modifier) {
         LumenText(heading, LumenType.Section, Modifier.padding(start = LumenDimens.SafeHorizontal), color = LumenColors.TextSecondary)
@@ -68,7 +69,7 @@ internal fun UpNextRow(
             horizontalArrangement = Arrangement.spacedBy(LumenDimens.TileSpacing),
         ) {
             itemsIndexed(items) { index, item ->
-                UpNextTile(item, appName(item.packageName), onOptions, if (index == 0) Modifier.focusRequester(firstTile) else Modifier)
+                UpNextTile(item, appName(item.packageName), onOptions, onItemFocused, if (index == 0) Modifier.focusRequester(firstTile) else Modifier)
             }
         }
     }
@@ -76,7 +77,13 @@ internal fun UpNextRow(
 
 /** A program tile with its title under it while focused, and under that where the user is in it. */
 @Composable
-private fun UpNextTile(item: UpNextItem, appName: String?, onOptions: (UpNextItem, Rect) -> Unit, focusModifier: Modifier) {
+private fun UpNextTile(
+    item: UpNextItem,
+    appName: String?,
+    onOptions: (UpNextItem, Rect) -> Unit,
+    onFocused: (UpNextItem) -> Unit,
+    focusModifier: Modifier,
+) {
     val context = LocalContext.current
     val view = LocalView.current
     val art = remember(item.thumbnail) { item.thumbnail.asImageBitmap() }
@@ -102,7 +109,10 @@ private fun UpNextTile(item: UpNextItem, appName: String?, onOptions: (UpNextIte
             focusScale = PROGRAM_FOCUS_SCALE,
             idleFocusScale = PROGRAM_IDLE_FOCUS_SCALE,
             tileModifier = focusModifier
-                .onFocusChanged { focused = it.isFocused }
+                .onFocusChanged {
+                    focused = it.isFocused
+                    if (it.isFocused) onFocused(item)
+                }
                 .onGloballyPositioned { bounds[0] = it.boundsInRoot() },
         )
         // Room for both lines is always kept, so the row doesn't jump as focus arrives. Clears the focused tile's growth.

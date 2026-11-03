@@ -82,6 +82,7 @@ internal fun Hero(
     visible: Boolean,
     firstRowTile: FocusRequester,
     onProgramOptions: (UpNextItem, Rect) -> Unit,
+    onRecommendationFocused: (UpNextItem) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val alpha by animateFloatAsState(if (visible) 1f else 0f, tween(if (visible) 450 else 200), label = "heroAlpha")
@@ -129,6 +130,7 @@ internal fun Hero(
                     heading = "Recommended",
                     firstTile = firstRowTile,
                     onOptions = onProgramOptions,
+                    onItemFocused = onRecommendationFocused,
                     modifier = Modifier.offset(y = LumenDimens.SafeVertical - 6.dp),
                 )
             }
@@ -187,7 +189,8 @@ private const val SHELF_ART_RECHECK_MS = 20_000L
 
 /**
  * The full-screen stage behind everything: the focused app's [shelfArt] when it publishes some,
- * otherwise the wallpaper lit in the app's color, plus scrims that keep text legible. While
+ * otherwise the wallpaper lit in the color of its [glow] thumbnail or its own tile, plus scrims that
+ * keep text legible. While
  * browsing [below] the Top Shelf it melts into a frosted copy of itself, as tvOS's does.
  *
  * All of it is baked into one small bitmap per app, off the main thread. Every extra full-screen
@@ -204,6 +207,10 @@ internal fun Backdrop(
     /** A program from the full-screen Top Shelf, which replaces [shelfArt]'s artwork. */
     program: ShelfProgram?,
     loadProgram: suspend (ShelfProgram) -> Bitmap?,
+    /** Told once [program]'s picture is on its way in, so its text can arrive with it. */
+    onProgramShown: (ShelfProgram?) -> Unit,
+    /** A thumbnail whose color lights the stage, for an app with no artwork to fill it. */
+    glow: Bitmap?,
     below: Boolean,
     frost: LiveFrost,
 ) {
@@ -216,13 +223,13 @@ internal fun Backdrop(
     val fade = remember { Animatable(1f) }
     // True while an opaque bake hides a photo wallpaper completely, so it needn't be drawn.
     var coversWallpaper by remember { mutableStateOf(false) }
-    LaunchedEffect(preset, art, artwork, program) {
+    LaunchedEffect(preset, art, artwork, program, glow) {
         val first = current == null
         // Quick presses along the dock restart this effect before anything is baked or faded.
         if (!first) delay(BACKDROP_SETTLE_MS)
         val (next, nextFrost) = withContext(Dispatchers.Default) {
             val picture = program?.let { loadProgram(it) } ?: artwork?.decodeBackdrop()
-            val baked = picture?.let(::bakeArtwork) ?: bakeBackdrop(preset, art)
+            val baked = picture?.let { bakeArtwork(it, hasText = program != null) } ?: bakeBackdrop(preset, glow ?: art)
             // A transparent bake has nothing to frost by itself; glass falls back to the wallpaper's frost.
             baked.asImageBitmap() to baked.takeUnless { it.hasAlpha() }?.clearFrosted()?.asImageBitmap()
         }
@@ -230,6 +237,7 @@ internal fun Backdrop(
         coversWallpaper = coversWallpaper && opaque
         previous = current
         current = next
+        onProgramShown(program)
         frost.previous = frost.image
         frost.image = nextFrost
         frost.fade = if (first) 1f else 0f
@@ -265,10 +273,11 @@ internal fun Backdrop(
 
 /**
  * The app's artwork, full bleed, kept as bright as the dock's legibility allows, since at rest
- * there's nothing else on the stage. Drawn onto [bitmap] itself, which is freshly decoded for this,
- * so a full-screen bitmap is never copied. Opaque. Blocking.
+ * there's nothing else on the stage. In full screen ([hasText]) a pool of shade at the lower left
+ * keeps the program's text readable over any lettering in the art. Drawn onto [bitmap] itself, which
+ * is freshly decoded for this, so a full-screen bitmap is never copied. Opaque. Blocking.
  */
-private fun bakeArtwork(bitmap: Bitmap): Bitmap {
+private fun bakeArtwork(bitmap: Bitmap, hasText: Boolean): Bitmap {
     val canvas = Canvas(bitmap)
     val width = bitmap.width.toFloat()
     val height = bitmap.height.toFloat()
@@ -280,6 +289,10 @@ private fun bakeArtwork(bitmap: Bitmap): Bitmap {
         Shader.TileMode.CLAMP,
     )
     canvas.drawRect(0f, 0f, width, height, scrim)
+    if (hasText) {
+        scrim.shader = RadialGradient(width * 0.12f, height * 0.9f, width * 0.6f, 0xCC000000.toInt(), 0x00000000, Shader.TileMode.CLAMP)
+        canvas.drawRect(0f, 0f, width, height, scrim)
+    }
     bitmap.setHasAlpha(false)
     return bitmap
 }
@@ -318,9 +331,14 @@ private fun bakeBackdrop(preset: GradientPreset?, art: Bitmap?): Bitmap {
  * Black and white brands have no color to offer and leave the wallpaper showing.
  */
 private fun drawAppLight(canvas: Canvas, art: Bitmap, width: Float, height: Float) {
-    val (hue, presence) = dominantHue(art) ?: return
-    fun color(hue: Float, value: Float, alpha: Float) =
-        android.graphics.Color.HSVToColor((alpha * presence * 255).toInt(), floatArrayOf((hue + 360f) % 360f, STAGE_SATURATION, value))
+    val (dominant, presence) = dominantHue(art) ?: return
+    // Yellow turns to mustard across a whole screen, so it leans amber.
+    val hue = if (dominant in YELLOWS) AMBER_HUE else dominant
+    fun color(hue: Float, value: Float, alpha: Float): Int {
+        val hsv = floatArrayOf((hue + 360f) % 360f, STAGE_SATURATION, value)
+        hsv[2] = value * (STAGE_MAX_LUMINANCE / luminance(hsv[0], hsv[1])).coerceAtMost(1f)
+        return android.graphics.Color.HSVToColor((alpha * presence * 255).toInt(), hsv)
+    }
 
     val paint = Paint().apply { isDither = true }
     paint.color = color(hue, 0.12f, 1f)
@@ -331,6 +349,12 @@ private fun drawAppLight(canvas: Canvas, art: Bitmap, width: Float, height: Floa
     }
     light(color(hue, 0.85f, 0.95f), width * 0.8f, height * 0.1f, width * 0.85f)
     light(color(hue - 24f, 0.55f, 0.8f), width * 0.08f, height * 0.85f, width * 0.6f)
+}
+
+/** How bright a hue looks at full value, 0..1. At the same value, yellow looks far brighter than blue. */
+private fun luminance(hue: Float, saturation: Float): Float {
+    val color = android.graphics.Color.HSVToColor(floatArrayOf(hue, saturation, 1f))
+    return (0.2126f * android.graphics.Color.red(color) + 0.7152f * android.graphics.Color.green(color) + 0.0722f * android.graphics.Color.blue(color)) / 255f
 }
 
 /**
@@ -362,6 +386,10 @@ private fun dominantHue(art: Bitmap): Pair<Float, Float>? {
 }
 
 private const val STAGE_SATURATION = 0.88f
+/** Keeps every color about as bright as a saturated blue, so white text reads over all of them. */
+private const val STAGE_MAX_LUMINANCE = 0.5f
+private val YELLOWS = 40f..75f
+private const val AMBER_HUE = 34f
 private const val HUE_SAMPLE_WIDTH = 32
 private const val HUE_SAMPLE_HEIGHT = 18
 private const val HUE_BUCKETS = 36

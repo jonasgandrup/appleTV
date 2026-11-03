@@ -83,7 +83,7 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 
-/** The dock, plus a sliver of the grid below it, as on tvOS. */
+/** The dock, plus the room below it. What's further down stays out of sight until focus goes there, leaving the stage calm. */
 private val ShelfAreaHeight = LumenDimens.TileHeight + LumenDimens.DockInset * 2 + 36.dp
 private const val SHELF_KEY = "shelf"
 private const val CONTINUE_KEY = "continue"
@@ -122,6 +122,9 @@ fun HomeScreen(
     // Where focus goes after a program leaves a row, since it was on that program's tile.
     var refocus by remember { mutableStateOf<FocusRequester?>(null) }
     val recommendationsFirstTile = remember { FocusRequester() }
+    // Held as State and read only by the stage, like the focused app.
+    val focusedRecommendation = remember { mutableStateOf<UpNextItem?>(null) }
+    val shownProgram = remember { mutableStateOf<ShelfProgram?>(null) }
     val continueFirstTile = remember { FocusRequester() }
     var renaming by remember { mutableStateOf<AppFolder?>(null) }
     var openFolderId by rememberSaveable { mutableStateOf<String?>(null) }
@@ -153,6 +156,13 @@ fun HomeScreen(
         }
     }
     val shelfArt = rememberShelfArt(hero, state.settings.ambientBackdrop, state.settings.removedPrograms, viewModel)
+    // An app with only thumbnails lights the stage with the one in focus, or else its first.
+    val stageGlow = remember {
+        derivedStateOf {
+            val items = shelfArt.value?.takeIf { it.packageName == hero.value?.packageName }?.recommendations.orEmpty()
+            (focusedRecommendation.value?.takeIf { it in items } ?: items.firstOrNull())?.thumbnail
+        }
+    }
     val continueWatching by viewModel.continueWatching.collectAsStateWithLifecycle()
     var continueHasFocus by remember { mutableStateOf(false) }
     // Coming back from an app is when this changes, and apps can take a moment to publish what was just watched.
@@ -403,12 +413,15 @@ fun HomeScreen(
                     ambient = state.settings.ambientBackdrop,
                     program = stageProgram,
                     loadProgram = viewModel::programBackdrop,
+                    onProgramShown = { shownProgram.value = it },
+                    glow = stageGlow,
                     below = browsingBelow,
                     frost = liveFrost,
                 )
 
                 // The dock and grid slide off for the full-screen Top Shelf, staying in place for focus to come back to.
                 val slidOff by animateFloatAsState(if (isFullScreen) 1f else 0f, tween(450, easing = FastOutSlowInEasing), label = "slidOff")
+                val belowAlpha by animateFloatAsState(if (browsingBelow) 1f else 0f, tween(300), label = "belowAlpha")
                 Column(Modifier.fillMaxSize()) {
                     StageTitle(
                         hero = hero,
@@ -416,6 +429,7 @@ fun HomeScreen(
                         visible = !browsingBelow && !editor.editing && !isFullScreen,
                         firstRowTile = recommendationsFirstTile,
                         onProgramOptions = { item, bounds -> programOptionsFor = ProgramOptions(item, bounds, removable = false) },
+                        onRecommendationFocused = { focusedRecommendation.value = it },
                         modifier = Modifier.fillMaxWidth().height(heroHeight),
                     )
 
@@ -462,6 +476,7 @@ fun HomeScreen(
                                     onOptions = { item, bounds -> programOptionsFor = ProgramOptions(item, bounds, removable = true) },
                                     appName = { pkg -> state.allApps.find { it.packageName == pkg }?.label },
                                     modifier = Modifier
+                                        .graphicsLayer { alpha = belowAlpha }
                                         .padding(top = 4.dp, bottom = 4.dp)
                                         .onFocusChanged {
                                             continueHasFocus = it.hasFocus
@@ -481,7 +496,9 @@ fun HomeScreen(
                                 lifted = editor.lifted,
                                 firstTileFocus = if (dock.isEmpty()) firstFocus else null,
                                 settingsFocus = settingsFocus,
-                                modifier = Modifier.onFocusChanged { if (it.hasFocus) browsingBelow = true },
+                                modifier = Modifier
+                                    .graphicsLayer { alpha = belowAlpha }
+                                    .onFocusChanged { if (it.hasFocus) browsingBelow = true },
                             )
                         }
                     }
@@ -491,6 +508,7 @@ fun HomeScreen(
                     FullScreenShelf(
                         programs = featured,
                         index = (fullScreen ?: 0).coerceAtMost(featured.lastIndex),
+                        shown = shownProgram.value,
                         onIndex = { fullScreen = it },
                         playFocus = playFocus,
                         preload = viewModel::preloadProgram,
@@ -654,6 +672,8 @@ private fun StageBackdrop(
     ambient: Boolean,
     program: State<ShelfProgram?>,
     loadProgram: suspend (ShelfProgram) -> Bitmap?,
+    onProgramShown: (ShelfProgram?) -> Unit,
+    glow: State<Bitmap?>,
     below: Boolean,
     frost: LiveFrost,
 ) {
@@ -663,6 +683,8 @@ private fun StageBackdrop(
         shelfArt = shelfArt.value,
         program = program.value,
         loadProgram = loadProgram,
+        onProgramShown = onProgramShown,
+        glow = glow.value,
         below = below,
         frost = frost,
     )
@@ -698,6 +720,7 @@ private fun StageTitle(
     visible: Boolean,
     firstRowTile: FocusRequester,
     onProgramOptions: (UpNextItem, Rect) -> Unit,
+    onRecommendationFocused: (UpNextItem) -> Unit,
     modifier: Modifier,
 ) {
     val app = hero.value
@@ -707,6 +730,7 @@ private fun StageTitle(
         visible = visible,
         firstRowTile = firstRowTile,
         onProgramOptions = onProgramOptions,
+        onRecommendationFocused = onRecommendationFocused,
         modifier = modifier,
     )
 }
