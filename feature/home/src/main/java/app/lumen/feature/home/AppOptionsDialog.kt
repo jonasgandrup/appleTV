@@ -75,6 +75,26 @@ internal fun AppOptionsDialog(anchor: Rect, options: AppOptions, onDismiss: () -
     }
 }
 
+/** The menu for a program held down in a row. [onRemove] is null for what an app merely recommends, which has nothing to take away. */
+@Composable
+internal fun ProgramOptionsDialog(
+    anchor: Rect,
+    removeLabel: String,
+    onRemove: (() -> Unit)?,
+    appLabel: String?,
+    onOpenApp: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    GlassDialog(onDismiss, Alignment.Center, Modifier.width(390.dp), anchor = anchor) { firstRow ->
+        fun run(action: () -> Unit): () -> Unit = {
+            onDismiss()
+            action()
+        }
+        if (onRemove != null) MenuRow(removeLabel, run(onRemove), Modifier.focusRequester(firstRow))
+        if (appLabel != null) MenuRow("Open $appLabel", run(onOpenApp), if (onRemove == null) Modifier.focusRequester(firstRow) else Modifier)
+    }
+}
+
 /** The menu for a folder held down in the grid. */
 @Composable
 internal fun FolderOptionsDialog(anchor: Rect, onEditHomeScreen: () -> Unit, onRename: () -> Unit, onDismiss: () -> Unit) {

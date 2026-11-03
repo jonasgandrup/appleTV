@@ -66,7 +66,14 @@ class HomeViewModel(
     private val topShelf: TopShelfRepository,
 ) : ViewModel() {
 
+    private var removedProgramsLoaded = false
+
     val state: StateFlow<HomeUiState> = combine(apps.apps, settings.settings) { list, prefs ->
+        // Only the first time: from then on the repository is ahead of what's been saved.
+        if (!removedProgramsLoaded) {
+            removedProgramsLoaded = true
+            topShelf.removedPrograms = prefs.removedPrograms
+        }
         // Wait for first-run seeding too, so initial focus lands on the Top Shelf, not the grid.
         if (list == null || !prefs.favoritesInitialized) return@combine HomeUiState(loading = true, settings = prefs)
         val visible = list.filter {
@@ -116,6 +123,11 @@ class HomeViewModel(
 
     suspend fun refreshContinueWatching(packageNames: List<String>) {
         continuing.value = topShelf.continueWatching(packageNames)
+    }
+
+    fun removeProgram(item: UpNextItem) {
+        continuing.value = topShelf.removeProgram(item)
+        viewModelScope.launch { settings.setRemovedPrograms(topShelf.removedPrograms) }
     }
 
     /** Which tile had focus when the home screen was last left, so coming back lands there. */

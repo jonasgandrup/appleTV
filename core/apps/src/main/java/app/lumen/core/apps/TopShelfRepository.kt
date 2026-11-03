@@ -47,7 +47,10 @@ class ShelfArt(
     /** Differs whenever anything shown here does, so a reread that changed nothing leaves the screen alone. */
     internal val signature: String,
 ) {
-    internal val hasBackdrop: Boolean get() = backdrop != null
+    /** There's artwork to fill the stage, so the picture can speak for itself. */
+    val hasBackdrop: Boolean get() = backdrop != null
+
+    internal fun without(item: UpNextItem) = ShelfArt(packageName, title, backdrop, upNext - item, isRecommendations, featured, "$signature-")
 
     /**
      * The artwork cropped to 16:9, as wide as the source allows up to [TopShelfRepository.ART_WIDTH],
@@ -66,6 +69,8 @@ class UpNextItem(
     val detail: String?,
     /** Opens the program in its app; null when the app gave none. */
     val intentUri: String?,
+    /** Where the user is in it. When this changes, they've watched it. */
+    internal val place: String,
 )
 
 /** A program from an app's preview channels. Its artwork is fetched only if it's actually shown. */
@@ -98,9 +103,14 @@ class TopShelfRepository(context: Context) {
 
     private val context = context.applicationContext
     private val cache = ConcurrentHashMap<String, Entry>()
-    /** Only read and written by [continueWatching], which runs one at a time. */
+    /** Replaced whole, by [continueWatching], which runs one at a time, and by [removeProgram]. */
+    @Volatile
     private var continuing: List<UpNextItem> = emptyList()
     private var continuingSignature: String? = null
+
+    /** Programs the user removed, and where they were in each then. See [removeProgram]. */
+    @Volatile
+    var removedPrograms: Map<String, String> = emptyMap()
 
     private class Entry(val art: ShelfArt?, val staleAt: Long, val complete: Boolean)
 
@@ -183,6 +193,22 @@ class TopShelfRepository(context: Context) {
         }
     }
 
+    /**
+     * Hides [item] from every row, the stage and full screen. Apps' own lists can't be changed from
+     * here, so it comes back only once where the user is in it changes, meaning they've watched it.
+     * What's cached loses it right away; returns what's left of Continue Watching.
+     */
+    fun removeProgram(item: UpNextItem): List<UpNextItem> {
+        val key = programKey(item.packageName, item.title)
+        // Taken out first, so the newest removal goes last and is the last to be forgotten.
+        removedPrograms = removedPrograms - key + (key to item.place)
+        cache.computeIfPresent(item.packageName) { _, entry -> Entry(entry.art?.without(item), 0L, entry.complete) }
+        continuing = continuing.filterNot { it.packageName == item.packageName && it.title == item.title }
+        return continuing
+    }
+
+    private fun programKey(packageName: String, title: String?) = "$packageName|$title"
+
     /** Whether a read that came up short lost something, rather than the app having dropped it. */
     private fun ShelfArt?.isWorseThan(previous: ShelfArt): Boolean =
         this == null || upNext.size < previous.upNext.size || (previous.hasBackdrop && !hasBackdrop)
@@ -254,7 +280,7 @@ class TopShelfRepository(context: Context) {
         val title = program.title?.takeIf(String::isNotBlank) ?: return null
         val thumbnail = decodeArt(art, THUMB_WIDTH, THUMB_HEIGHT, upscale = true, minWidth = MIN_THUMB_WIDTH) ?: return null
         program.progress?.let { drawProgress(thumbnail, it) }
-        return UpNextItem(packageName, title, thumbnail, program.detail, program.intentUri)
+        return UpNextItem(packageName, title, thumbnail, program.detail, program.intentUri, program.place)
     }
 
     private class Program(
@@ -270,6 +296,7 @@ class TopShelfRepository(context: Context) {
         val description: String?,
         /** Why it's in Watch Next; null for a preview program, or when the app didn't say. */
         val watchNextType: Int?,
+        val place: String,
     ) {
         /** Started, or the next episode of something that was. A program with no stated type counts only if it's been started. */
         val isContinuing: Boolean
@@ -302,7 +329,10 @@ class TopShelfRepository(context: Context) {
                     val detail = listOfNotNull(episode, timeLeft(position, duration)).joinToString(" · ").ifEmpty { null }
                     val description = c.stringOrNull(DESCRIPTION)?.takeIf(String::isNotBlank)
                     val type = if (isWatchNext) c.getColumnIndex(WATCH_NEXT_TYPE).takeIf { it >= 0 && !c.isNull(it) }?.let(c::getInt) else null
-                    add(Program(c.stringOrNull(TITLE), art, c.longOrZero(rankColumn), c.stringOrNull(INTENT_URI), progress, detail, episode, description, type))
+                    val title = c.stringOrNull(TITLE)
+                    val place = "$episode@$position"
+                    if (isWatchNext && removedPrograms[programKey(packageName, title)] == place) continue
+                    add(Program(title, art, c.longOrZero(rankColumn), c.stringOrNull(INTENT_URI), progress, detail, episode, description, type, place))
                 }
             }.sortedByDescending { it.rank }.take(limit)
         }

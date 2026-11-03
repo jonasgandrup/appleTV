@@ -54,6 +54,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.lumen.core.apps.AppInfo
 import app.lumen.core.apps.ShelfArt
 import app.lumen.core.apps.ShelfProgram
+import app.lumen.core.apps.UpNextItem
 import app.lumen.core.designsystem.Clock
 import app.lumen.core.designsystem.LiveFrost
 import app.lumen.core.designsystem.LocalGlassBackdrop
@@ -112,6 +113,11 @@ fun HomeScreen(
     var browsingBelow by rememberSaveable { mutableStateOf(false) }
     var optionsFor by remember { mutableStateOf<Pair<AppInfo, Rect>?>(null) }
     var folderOptionsFor by remember { mutableStateOf<Pair<HomeItem.Folder, Rect>?>(null) }
+    var programOptionsFor by remember { mutableStateOf<ProgramOptions?>(null) }
+    // Where focus goes after a program leaves a row, since it was on that program's tile.
+    var refocus by remember { mutableStateOf<FocusRequester?>(null) }
+    val upNextFirstTile = remember { FocusRequester() }
+    val continueFirstTile = remember { FocusRequester() }
     var renaming by remember { mutableStateOf<AppFolder?>(null) }
     var openFolderId by rememberSaveable { mutableStateOf<String?>(null) }
     // Which of the app's featured programs fills the screen; null when the Top Shelf isn't full screen.
@@ -142,13 +148,13 @@ fun HomeScreen(
                 ?: state.allApps.firstOrNull()
         }
     }
-    val shelfArt = rememberShelfArt(hero, state.settings.ambientBackdrop, viewModel)
+    val shelfArt = rememberShelfArt(hero, state.settings.ambientBackdrop, state.settings.removedPrograms, viewModel)
     val continueWatching by viewModel.continueWatching.collectAsStateWithLifecycle()
     var continueHasFocus by remember { mutableStateOf(false) }
     // Coming back from an app is when this changes, and apps can take a moment to publish what was just watched.
     val tvAppPackages = remember(state.allApps) { state.allApps.filter { it.isTvApp }.map { it.packageName } }
     val lifecycle = LocalLifecycleOwner.current.lifecycle
-    LaunchedEffect(tvAppPackages) {
+    LaunchedEffect(tvAppPackages, state.settings.removedPrograms) {
         lifecycle.currentStateFlow
             .map { it.isAtLeast(Lifecycle.State.RESUMED) }
             .distinctUntilChanged()
@@ -162,6 +168,14 @@ fun HomeScreen(
     // If the last program goes while focus is on it, focus needs somewhere to land.
     LaunchedEffect(continueWatching.isEmpty()) {
         if (continueWatching.isEmpty() && continueHasFocus) runCatching { firstFocus.requestFocus() }
+    }
+    LaunchedEffect(refocus) {
+        val target = refocus ?: return@LaunchedEffect
+        withFrameNanos { }
+        withFrameNanos { }
+        // The row is gone if that was its last program, which leaves its requester unattached.
+        if (runCatching { target.requestFocus() }.isFailure) runCatching { firstFocus.requestFocus() }
+        refocus = null
     }
     // While an app is being moved, the editor's arrangement shows instead of the saved one.
     val dock = if (editor.active) editor.dock.filterIsInstance<HomeItem.App>().map { it.app } else state.favorites
@@ -273,6 +287,7 @@ fun HomeScreen(
             if (editor.editing) dropLifted()
             optionsFor = null
             folderOptionsFor = null
+            programOptionsFor = null
             renaming = null
             openFolderId = null
             controlCenterOpen = false
@@ -387,6 +402,7 @@ fun HomeScreen(
                     program = stageProgram,
                     loadProgram = viewModel::programBackdrop,
                     below = browsingBelow,
+                    rowFocused = upNextHasFocus,
                     frost = liveFrost,
                 )
 
@@ -398,6 +414,16 @@ fun HomeScreen(
                         shelfArt = shelfArt,
                         visible = !browsingBelow && !editor.editing && !isFullScreen,
                         onRowFocus = { upNextHasFocus = it },
+                        firstRowTile = upNextFirstTile,
+                        onProgramOptions = { art, item, bounds ->
+                            programOptionsFor = ProgramOptions(
+                                item,
+                                bounds,
+                                removeLabel = "Remove from Up Next",
+                                removable = !art.isRecommendations,
+                                refocus = upNextFirstTile,
+                            )
+                        },
                         modifier = Modifier.fillMaxWidth().height(heroHeight),
                     )
 
@@ -440,6 +466,16 @@ fun HomeScreen(
                                 UpNextRow(
                                     items = continueWatching,
                                     heading = "Continue Watching",
+                                    firstTile = continueFirstTile,
+                                    onOptions = { item, bounds ->
+                                        programOptionsFor = ProgramOptions(
+                                            item,
+                                            bounds,
+                                            removeLabel = "Remove from Continue Watching",
+                                            removable = true,
+                                            refocus = continueFirstTile,
+                                        )
+                                    },
                                     appName = { pkg -> state.allApps.find { it.packageName == pkg }?.label },
                                     modifier = Modifier
                                         .padding(top = 4.dp, bottom = 4.dp)
@@ -476,14 +512,24 @@ fun HomeScreen(
                     )
                 }
 
-                // tvOS's hint above the dock, for apps whose next step up is full screen.
-                val canGoFullScreen = featured.isNotEmpty() && shelfArt.value?.upNext.isNullOrEmpty()
-                if (canGoFullScreen && !browsingBelow && !isFullScreen && !editor.editing) {
+                // tvOS's hint above the dock, naming what Up reveals when the stage shows nothing of it yet.
+                val art = shelfArt.value?.takeIf { it.packageName == hero.value?.packageName }
+                val upReveals = when {
+                    art == null -> null
+                    art.upNext.isEmpty() -> "full screen".takeIf { featured.isNotEmpty() }
+                    art.hasBackdrop -> "Up Next"
+                    else -> null
+                }
+                if (upReveals != null && dockHasFocus && !browsingBelow && !isFullScreen && !editor.editing) {
                     LumenText(
-                        "Press Up for full screen",
+                        "Press Up for $upReveals",
                         LumenType.Caption,
-                        color = LumenColors.TextSecondary,
-                        modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = ShelfAreaHeight + 2.dp),
+                        // On glass, since it can land on anything in the artwork, even white lettering.
+                        modifier = Modifier
+                            .align(Alignment.BottomCenter)
+                            .padding(bottom = ShelfAreaHeight + 8.dp)
+                            .liquidGlass(LumenDimens.CapsuleCorner, tint = LumenColors.GlassTintDim)
+                            .padding(horizontal = 12.dp, vertical = 3.dp),
                     )
                 }
 
@@ -591,6 +637,25 @@ fun HomeScreen(
                     )
                 }
 
+                programOptionsFor?.let { options ->
+                    val app = state.allApps.find { it.packageName == options.item.packageName }
+                    ProgramOptionsDialog(
+                        anchor = options.bounds,
+                        removeLabel = options.removeLabel,
+                        onRemove = if (options.removable) {
+                            {
+                                viewModel.removeProgram(options.item)
+                                refocus = options.refocus
+                            }
+                        } else {
+                            null
+                        },
+                        appLabel = app?.label,
+                        onOpenApp = { app?.let { viewModel.launch(it) } },
+                        onDismiss = { programOptionsFor = null },
+                    )
+                }
+
                 folderOptionsFor?.let { (folder, bounds) ->
                     FolderOptionsDialog(
                         anchor = bounds,
@@ -623,6 +688,7 @@ private fun StageBackdrop(
     program: State<ShelfProgram?>,
     loadProgram: suspend (ShelfProgram) -> Bitmap?,
     below: Boolean,
+    rowFocused: Boolean,
     frost: LiveFrost,
 ) {
     Backdrop(
@@ -632,14 +698,40 @@ private fun StageBackdrop(
         program = program.value,
         loadProgram = loadProgram,
         below = below,
+        rowFocused = rowFocused,
         frost = frost,
     )
 }
 
+/** A program held down in a row, for [ProgramOptionsDialog]. */
+private class ProgramOptions(
+    val item: UpNextItem,
+    val bounds: Rect,
+    val removeLabel: String,
+    val removable: Boolean,
+    val refocus: FocusRequester,
+)
+
 @Composable
-private fun StageTitle(hero: State<AppInfo?>, shelfArt: State<ShelfArt?>, visible: Boolean, onRowFocus: (Boolean) -> Unit, modifier: Modifier) {
+private fun StageTitle(
+    hero: State<AppInfo?>,
+    shelfArt: State<ShelfArt?>,
+    visible: Boolean,
+    onRowFocus: (Boolean) -> Unit,
+    firstRowTile: FocusRequester,
+    onProgramOptions: (ShelfArt, UpNextItem, Rect) -> Unit,
+    modifier: Modifier,
+) {
     val app = hero.value
-    Hero(app = app, shelfArt = shelfArt.value?.takeIf { it.packageName == app?.packageName }, visible = visible, onRowFocus = onRowFocus, modifier = modifier)
+    Hero(
+        app = app,
+        shelfArt = shelfArt.value?.takeIf { it.packageName == app?.packageName },
+        visible = visible,
+        onRowFocus = onRowFocus,
+        firstRowTile = firstRowTile,
+        onProgramOptions = onProgramOptions,
+        modifier = modifier,
+    )
 }
 
 /** A height read during layout, so animating it relayouts without recomposing. */

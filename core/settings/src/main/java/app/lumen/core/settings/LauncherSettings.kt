@@ -19,6 +19,11 @@ data class LauncherSettings(
     /** The user's name, whose initial stands in for tvOS's profile picture. Blank shows a generic person. */
     val profileName: String = "",
     val hidden: Set<String> = emptySet(),
+    /**
+     * Programs removed from Up Next and Continue Watching, and where the user was in each when they
+     * did. Apps' own lists are read-only here, so this hides them, until that place changes.
+     */
+    val removedPrograms: Map<String, String> = emptyMap(),
     /** Most recent first. Only launches made from Lumen are tracked. */
     val recents: List<String> = emptyList(),
     val wallpaper: Wallpaper = Wallpaper.Default,

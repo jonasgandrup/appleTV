@@ -46,19 +46,22 @@ import app.lumen.core.designsystem.LumenType
  * the app's Watch Next, or its recommendations if that's all it has. Up from the dock steps into it;
  * Back or Down steps out again. Tiles show how far along each program is, and their title, episode
  * and time left only while focused, after the name [appName] gives their app when the row mixes apps.
- * [hint] appears beside the heading while focus is in the row.
+ * [hint] appears beside the heading while focus is in the row. Holding select on a tile asks for
+ * [onOptions], with its bounds in the window to anchor a menu to. [firstTile] takes focus when
+ * something enters the row for the first time, or when a tile goes away.
  */
 @OptIn(ExperimentalComposeUiApi::class)
 @Composable
 internal fun UpNextRow(
     items: List<UpNextItem>,
     heading: String,
+    firstTile: FocusRequester,
+    onOptions: (UpNextItem, Rect) -> Unit,
     modifier: Modifier = Modifier,
     hint: String? = null,
     appName: (String) -> String? = { null },
 ) {
     var rowFocused by remember { mutableStateOf(false) }
-    val firstTile = remember { FocusRequester() }
     Column(modifier.onFocusChanged { rowFocused = it.hasFocus }) {
         Row(Modifier.padding(start = LumenDimens.SafeHorizontal), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
             LumenText(heading, LumenType.Section, color = LumenColors.TextSecondary)
@@ -73,7 +76,7 @@ internal fun UpNextRow(
             horizontalArrangement = Arrangement.spacedBy(LumenDimens.TileSpacing),
         ) {
             itemsIndexed(items) { index, item ->
-                UpNextTile(item, appName(item.packageName), if (index == 0) Modifier.focusRequester(firstTile) else Modifier)
+                UpNextTile(item, appName(item.packageName), onOptions, if (index == 0) Modifier.focusRequester(firstTile) else Modifier)
             }
         }
     }
@@ -81,7 +84,7 @@ internal fun UpNextRow(
 
 /** A program tile with its title under it while focused, and under that where the user is in it. */
 @Composable
-private fun UpNextTile(item: UpNextItem, appName: String?, focusModifier: Modifier) {
+private fun UpNextTile(item: UpNextItem, appName: String?, onOptions: (UpNextItem, Rect) -> Unit, focusModifier: Modifier) {
     val context = LocalContext.current
     val view = LocalView.current
     val art = remember(item.thumbnail) { item.thumbnail.asImageBitmap() }
@@ -100,6 +103,7 @@ private fun UpNextTile(item: UpNextItem, appName: String?, focusModifier: Modifi
                 val zoom = ActivityOptions.makeScaleUpAnimation(view, r.left.toInt(), r.top.toInt(), r.width.toInt(), r.height.toInt())
                 openUpNext(context, item, zoom.toBundle())
             },
+            onLongClick = { onOptions(item, bounds[0]) },
             width = LumenDimens.ProgramTileWidth,
             height = LumenDimens.ProgramTileHeight,
             showLabel = false,

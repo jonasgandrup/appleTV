@@ -35,7 +35,11 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
@@ -47,6 +51,7 @@ import app.lumen.core.apps.AppCategory
 import app.lumen.core.apps.AppInfo
 import app.lumen.core.apps.ShelfArt
 import app.lumen.core.apps.ShelfProgram
+import app.lumen.core.apps.UpNextItem
 import app.lumen.core.designsystem.LiveFrost
 import app.lumen.core.designsystem.LumenColors
 import app.lumen.core.designsystem.LumenDimens
@@ -74,9 +79,24 @@ import kotlin.math.roundToInt
  *
  * When the app has a Watch Next row, that sits at the foot of the stage, just above the dock, as
  * Continue Watching does in Apple's TV app.
+ *
+ * As on tvOS, artwork has the stage to itself at rest: the title and row only show once Up moves
+ * focus into the row. The row stays in place while hidden, for focus to find. An app with no artwork
+ * keeps both, since there'd be nothing to see otherwise.
  */
 @Composable
-internal fun Hero(app: AppInfo?, shelfArt: ShelfArt?, visible: Boolean, onRowFocus: (Boolean) -> Unit, modifier: Modifier = Modifier) {
+internal fun Hero(
+    app: AppInfo?,
+    shelfArt: ShelfArt?,
+    visible: Boolean,
+    onRowFocus: (Boolean) -> Unit,
+    firstRowTile: FocusRequester,
+    onProgramOptions: (ShelfArt, UpNextItem, Rect) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    var rowFocused by remember { mutableStateOf(false) }
+    val stageIsArt = shelfArt?.hasBackdrop == true
+    val detailsAlpha by animateFloatAsState(if (!stageIsArt || rowFocused) 1f else 0f, tween(250), label = "stageDetails")
     val alpha by animateFloatAsState(if (visible) 1f else 0f, tween(if (visible) 450 else 200), label = "heroAlpha")
     Box(modifier) {
         AnimatedContent(
@@ -91,7 +111,7 @@ internal fun Hero(app: AppInfo?, shelfArt: ShelfArt?, visible: Boolean, onRowFoc
                 .align(Alignment.TopStart)
                 .padding(start = LumenDimens.SafeHorizontal, top = LumenDimens.SafeVertical)
                 .widthIn(max = HeroTitleMaxWidth)
-                .graphicsLayer { this.alpha = alpha },
+                .graphicsLayer { this.alpha = alpha * detailsAlpha },
             label = "hero",
         ) { target ->
             if (target != null) {
@@ -121,8 +141,16 @@ internal fun Hero(app: AppInfo?, shelfArt: ShelfArt?, visible: Boolean, onRowFoc
                 UpNextRow(
                     items = target.upNext,
                     heading = if (target.isRecommendations) "Recommended" else "Up Next",
+                    firstTile = firstRowTile,
+                    onOptions = { item, bounds -> onProgramOptions(target, item, bounds) },
                     hint = "Press Up for full screen".takeIf { target.featured.isNotEmpty() },
-                    modifier = Modifier.offset(y = LumenDimens.SafeVertical - 6.dp).onFocusChanged { onRowFocus(it.hasFocus) },
+                    modifier = Modifier
+                        .offset(y = LumenDimens.SafeVertical - 6.dp)
+                        .graphicsLayer { this.alpha = detailsAlpha }
+                        .onFocusChanged {
+                            rowFocused = it.hasFocus
+                            onRowFocus(it.hasFocus)
+                        },
                 )
             }
         }
@@ -141,13 +169,14 @@ private val HeroTitleMaxWidth = 560.dp
  * shows at once. Holds the last art until the next arrives; check its package before using it.
  *
  * What's shown stays until something better replaces it. Coming back from an app rereads it, and
- * again a little later, since apps can take a moment to publish what was just watched.
+ * again a little later, since apps can take a moment to publish what was just watched. So does a
+ * change in [removedPrograms], which can change what's on the stage.
  */
 @Composable
-internal fun rememberShelfArt(hero: State<AppInfo?>, enabled: Boolean, viewModel: HomeViewModel): State<ShelfArt?> {
+internal fun rememberShelfArt(hero: State<AppInfo?>, enabled: Boolean, removedPrograms: Map<String, String>, viewModel: HomeViewModel): State<ShelfArt?> {
     val art = remember { mutableStateOf<ShelfArt?>(null) }
     val lifecycle = LocalLifecycleOwner.current.lifecycle
-    LaunchedEffect(enabled) {
+    LaunchedEffect(enabled, removedPrograms) {
         snapshotFlow { hero.value?.takeIf { enabled } }
             .distinctUntilChangedBy { it?.packageName }
             .collectLatest { app ->
@@ -201,9 +230,12 @@ internal fun Backdrop(
     program: ShelfProgram?,
     loadProgram: suspend (ShelfProgram) -> Bitmap?,
     below: Boolean,
+    /** Focus is in the row on the stage, whose text the art fades back behind. */
+    rowFocused: Boolean,
     frost: LiveFrost,
 ) {
     val belowAmount by animateFloatAsState(if (below) 1f else 0f, tween(450), label = "below")
+    val rowAmount by animateFloatAsState(if (rowFocused) 1f else 0f, tween(250), label = "rowShade")
     val preset = (wallpaper as? Wallpaper.Gradient)?.preset
     val art = app?.art
     val artwork = shelfArt?.takeIf { it.packageName == app?.packageName }
@@ -218,7 +250,7 @@ internal fun Backdrop(
         if (!first) delay(BACKDROP_SETTLE_MS)
         val (next, nextFrost) = withContext(Dispatchers.Default) {
             val picture = program?.let { loadProgram(it) } ?: artwork?.decodeBackdrop()
-            val baked = picture?.let { bakeArtwork(it, hasRow = program == null && artwork?.upNext?.isNotEmpty() == true) } ?: bakeBackdrop(preset, art)
+            val baked = picture?.let(::bakeArtwork) ?: bakeBackdrop(preset, art)
             // A transparent bake has nothing to frost by itself; glass falls back to the wallpaper's frost.
             baked.asImageBitmap() to baked.takeUnless { it.hasAlpha() }?.clearFrosted()?.asImageBitmap()
         }
@@ -253,49 +285,38 @@ internal fun Backdrop(
                     }
                     current?.let { drawImage(it, dstSize = stretched, alpha = fade.value) }
                 }
+                // Only ever on screen while the row is, so the picture at rest costs one image and no more.
+                if (rowAmount > 0f && current?.hasAlpha == false) drawRect(RowShade, alpha = rowAmount)
                 if (belowAmount > 0f) frosted?.let { drawImage(it, dstSize = stretched, alpha = belowAmount) }
             },
         )
     }
 }
 
+/** Fades the art to near black behind the row and title, as it does above Continue Watching in Apple's TV app. */
+private val RowShade = Brush.verticalGradient(
+    0f to Color.Black.copy(alpha = 0.5f),
+    0.3f to Color.Black.copy(alpha = 0.6f),
+    0.55f to Color.Black.copy(alpha = 0.82f),
+    1f to Color.Black.copy(alpha = 0.92f),
+)
+
 /**
- * The app's artwork, full bleed, under scrims that are heavier than the color stage's: a photo
- * is busier than a gradient behind the title and the dock. With a program row above the dock
- * ([hasRow]) it fades to near black behind the row, as the art does above Continue Watching in
- * Apple's TV app. Drawn onto [bitmap] itself, which is freshly decoded for this, so a full-screen
- * bitmap is never copied. Opaque. Blocking.
+ * The app's artwork, full bleed, kept as bright as the dock's legibility allows, since at rest
+ * there's nothing else on the stage. Drawn onto [bitmap] itself, which is freshly decoded for this,
+ * so a full-screen bitmap is never copied. Opaque. Blocking.
  */
-private fun bakeArtwork(bitmap: Bitmap, hasRow: Boolean): Bitmap {
+private fun bakeArtwork(bitmap: Bitmap): Bitmap {
     val canvas = Canvas(bitmap)
     val width = bitmap.width.toFloat()
     val height = bitmap.height.toFloat()
     val scrim = Paint().apply { isDither = true }
-    scrim.shader = if (hasRow) {
-        LinearGradient(
-            0f, 0f, 0f, height,
-            intArrayOf(0x59000000, 0x00000000, 0xC7000000.toInt(), 0xEB000000.toInt()),
-            floatArrayOf(0f, 0.12f, 0.42f, 1f),
-            Shader.TileMode.CLAMP,
-        )
-    } else {
-        LinearGradient(
-            0f, 0f, 0f, height,
-            intArrayOf(0x59000000, 0x00000000, 0x1A000000, 0xB3000000.toInt()),
-            floatArrayOf(0f, 0.35f, 0.55f, 1f),
-            Shader.TileMode.CLAMP,
-        )
-    }
-    canvas.drawRect(0f, 0f, width, height, scrim)
     scrim.shader = LinearGradient(
-        0f, 0f, width, 0f,
-        intArrayOf(0x99000000.toInt(), 0x00000000),
-        floatArrayOf(0f, 0.6f),
+        0f, 0f, 0f, height,
+        intArrayOf(0x33000000, 0x00000000, 0x1A000000, 0xB3000000.toInt()),
+        floatArrayOf(0f, 0.25f, 0.55f, 1f),
         Shader.TileMode.CLAMP,
     )
-    canvas.drawRect(0f, 0f, width, height, scrim)
-    // A pool of shade behind the title, which bright art (a white set, say) would otherwise swallow.
-    scrim.shader = RadialGradient(width * 0.12f, height * 0.12f, width * 0.45f, 0x8C000000.toInt(), 0x00000000, Shader.TileMode.CLAMP)
     canvas.drawRect(0f, 0f, width, height, scrim)
     bitmap.setHasAlpha(false)
     return bitmap

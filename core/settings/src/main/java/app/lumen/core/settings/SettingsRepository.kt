@@ -69,6 +69,10 @@ class SettingsRepository(context: Context) {
         }
     }
 
+    suspend fun setRemovedPrograms(programs: Map<String, String>) {
+        store.edit { it[Keys.RemovedPrograms] = programs.encodeRemoved() }
+    }
+
     suspend fun recordLaunch(packageName: String) {
         store.edit {
             val recents = it[Keys.Recents].decodeList()
@@ -107,6 +111,7 @@ class SettingsRepository(context: Context) {
             folders = this[Keys.Folders].decodeFolders(),
             profileName = this[Keys.ProfileName].orEmpty(),
             hidden = this[Keys.Hidden].orEmpty(),
+            removedPrograms = this[Keys.RemovedPrograms].decodeRemoved(),
             recents = this[Keys.Recents].decodeList(),
             wallpaper = Wallpaper.decode(this[Keys.Wallpaper]),
             ambientBackdrop = this[Keys.AmbientBackdrop] ?: defaults.ambientBackdrop,
@@ -127,6 +132,7 @@ class SettingsRepository(context: Context) {
         val Folders = stringPreferencesKey("folders")
         val ProfileName = stringPreferencesKey("profile_name")
         val Hidden = stringSetPreferencesKey("hidden")
+        val RemovedPrograms = stringPreferencesKey("removed_programs")
         val Recents = stringPreferencesKey("recents")
         val Wallpaper = stringPreferencesKey("wallpaper")
         val AmbientBackdrop = booleanPreferencesKey("ambient_backdrop")
@@ -141,10 +147,22 @@ class SettingsRepository(context: Context) {
 
     private companion object {
         const val MAX_RECENTS = 10
+        const val MAX_REMOVED_PROGRAMS = 200
 
         // Package names never contain newlines, so a newline-joined string keeps order cheaply.
         fun String?.decodeList(): List<String> = this?.split('\n')?.filter { it.isNotBlank() }.orEmpty()
         fun List<String>.encodeList(): String = joinToString("\n")
+
+        // Newest last, so the oldest are the ones dropped once there are too many to be worth keeping.
+        fun Map<String, String>.encodeRemoved(): String = JSONObject().also { json ->
+            entries.toList().takeLast(MAX_REMOVED_PROGRAMS).forEach { (key, place) -> json.put(key, place) }
+        }.toString()
+
+        fun String?.decodeRemoved(): Map<String, String> {
+            if (this == null) return emptyMap()
+            val json = runCatching { JSONObject(this) }.getOrNull() ?: return emptyMap()
+            return buildMap { json.keys().forEach { key -> put(key, json.getString(key)) } }
+        }
 
         // JSON, since a folder's name can hold any character.
         fun List<AppFolder>.encodeFolders(): String = JSONArray().also { array ->
