@@ -103,6 +103,9 @@ class HomeViewModel(
     /** Artwork the app publishes to its TV channels, for the stage; null when it has none. */
     suspend fun shelfArt(app: AppInfo): ShelfArt? = topShelf.load(app.packageName)
     fun cachedShelfArt(app: AppInfo): ShelfArt? = topShelf.peek(app.packageName)
+    suspend fun refreshShelfArt(app: AppInfo): ShelfArt? = topShelf.refresh(app.packageName)
+    fun shelfArtIncomplete(app: AppInfo): Boolean = topShelf.isIncomplete(app.packageName)
+    fun expireShelfArt() = topShelf.expireAll()
     suspend fun programBackdrop(program: ShelfProgram): Bitmap? = topShelf.backdrop(program)
 
     /** Which tile had focus when the home screen was last left, so coming back lands there. */

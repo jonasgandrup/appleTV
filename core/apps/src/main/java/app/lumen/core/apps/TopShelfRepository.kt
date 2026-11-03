@@ -13,6 +13,7 @@ import android.media.tv.TvContract.WatchNextPrograms
 import android.net.Uri
 import android.os.SystemClock
 import android.util.Log
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -30,19 +31,29 @@ class ShelfArt(
     val title: String?,
     /**
      * The stage artwork, still compressed. A full-screen bitmap is 8 MB, too much to keep for every
-     * app in the dock, so it's decoded only when shown, with [decodeBackdrop].
+     * app in the dock, so it's decoded only when shown, with [decodeBackdrop]. Null when there's
+     * none worth filling the screen with.
      */
-    private val backdrop: ByteArray,
-    /** The app's Watch Next row, most recently watched first. Empty when it has none. */
+    private val backdrop: ByteArray?,
+    /** The row above the dock: the app's Watch Next, most recently watched first, or else what [isRecommendations] says. Can be empty. */
     val upNext: List<UpNextItem>,
+    /**
+     * The row is the app's preview channels instead of Watch Next. These are thumbnails made to be
+     * seen small, like YouTube's, which only look blurry and cluttered stretched across the screen.
+     */
+    val isRecommendations: Boolean,
     /** What the app features in its preview channels, best first, for the full-screen Top Shelf. Empty when it has none. */
     val featured: List<ShelfProgram>,
+    /** Differs whenever anything shown here does, so a reread that changed nothing leaves the screen alone. */
+    internal val signature: String,
 ) {
+    internal val hasBackdrop: Boolean get() = backdrop != null
+
     /**
      * The artwork cropped to 16:9, as wide as the source allows up to [TopShelfRepository.ART_WIDTH],
      * mutable so the stage can draw its scrims straight onto it. Blocking; null if it won't decode.
      */
-    fun decodeBackdrop(): Bitmap? = decodeArt(backdrop, TopShelfRepository.ART_WIDTH, TopShelfRepository.ART_HEIGHT, upscale = false)
+    fun decodeBackdrop(): Bitmap? = backdrop?.let { decodeArt(it, TopShelfRepository.ART_WIDTH, TopShelfRepository.ART_HEIGHT, upscale = false) }
 }
 
 /** A program in an app's Watch Next row. */
@@ -79,15 +90,19 @@ class ShelfProgram(
  * The provider normally limits a caller to its own rows, but a query from an app holding
  * READ_TV_LISTINGS also returns every other app's searchable rows. The backdrop comes from
  * Watch Next first (what the user is in the middle of), then the app's preview channels.
- * Results, including "nothing there", are cached for a while, since apps only refresh their
- * channels now and then.
+ * Results, including "nothing there", are cached for a while so moving along the dock stays quick,
+ * and reread when the user comes back from an app, which is when they're likely to have changed.
+ * A read that fails never replaces a good result: only what the app actually published does.
  */
 class TopShelfRepository(context: Context) {
 
     private val context = context.applicationContext
     private val cache = ConcurrentHashMap<String, Entry>()
 
-    private class Entry(val art: ShelfArt?, val loadedAt: Long)
+    private class Entry(val art: ShelfArt?, val staleAt: Long, val complete: Boolean)
+
+    /** What a read found, and whether everything it asked for arrived. */
+    private class Loaded(val art: ShelfArt?, val complete: Boolean)
 
     val hasPermission: Boolean
         get() = context.checkSelfPermission(PERMISSION) == PackageManager.PERMISSION_GRANTED
@@ -96,16 +111,47 @@ class TopShelfRepository(context: Context) {
     fun peek(packageName: String): ShelfArt? = cache[packageName]?.art
 
     suspend fun load(packageName: String): ShelfArt? {
-        cache[packageName]?.takeIf { SystemClock.elapsedRealtime() - it.loadedAt < CACHE_MS }?.let { return it.art }
+        cache[packageName]?.takeIf { SystemClock.elapsedRealtime() < it.staleAt }?.let { return it.art }
+        return refresh(packageName)
+    }
+
+    /** Reads [packageName]'s art again whatever the cache says. Hands back what was already there if nothing changed, or if the read failed. */
+    suspend fun refresh(packageName: String): ShelfArt? {
         if (!hasPermission) return null
         return withContext(Dispatchers.IO) {
-            val art = runCatching { query(packageName) }
-                .onFailure { Log.w(TAG, "No shelf art for $packageName", it) }
-                .getOrNull()
-            cache[packageName] = Entry(art, SystemClock.elapsedRealtime())
+            val loaded = try {
+                query(packageName)
+            } catch (e: CancellationException) {
+                // Focus moved on. That says nothing about the app, so nothing gets remembered.
+                throw e
+            } catch (e: Exception) {
+                Log.w(TAG, "No shelf art for $packageName", e)
+                null
+            }
+            val previous = cache[packageName]?.art
+            val art = when {
+                loaded == null -> previous
+                previous != null && !loaded.complete && loaded.art.isWorseThan(previous) -> previous
+                loaded.art?.signature == previous?.signature -> previous
+                else -> loaded.art
+            }
+            val complete = loaded?.complete == true
+            cache[packageName] = Entry(art, SystemClock.elapsedRealtime() + if (complete) CACHE_MS else RETRY_MS, complete)
             art
         }
     }
+
+    /** True when the last read of [packageName] came up short, so another try is worthwhile. */
+    fun isIncomplete(packageName: String): Boolean = cache[packageName]?.complete == false
+
+    /** Everything is reread the next time it's asked for, while still showing what's known until then. */
+    fun expireAll() {
+        cache.replaceAll { _, entry -> Entry(entry.art, 0L, entry.complete) }
+    }
+
+    /** Whether a read that came up short lost something, rather than the app having dropped it. */
+    private fun ShelfArt?.isWorseThan(previous: ShelfArt): Boolean =
+        this == null || upNext.size < previous.upNext.size || (previous.hasBackdrop && !hasBackdrop)
 
     /** [program]'s artwork for the stage, cropped as [ShelfArt.decodeBackdrop]'s is. Null if it can't be fetched. */
     suspend fun backdrop(program: ShelfProgram): Bitmap? = withContext(Dispatchers.IO) {
@@ -119,7 +165,7 @@ class TopShelfRepository(context: Context) {
         bytes?.let { decodeArt(it, ART_WIDTH, ART_HEIGHT, upscale = false) }
     }
 
-    private suspend fun query(packageName: String): ShelfArt? = coroutineScope {
+    private suspend fun query(packageName: String): Loaded = coroutineScope {
         val watchNext = programs(WATCH_NEXT_URI, packageName, LAST_ENGAGEMENT, MAX_UP_NEXT)
         val preview = programs(PREVIEW_URI, packageName, WEIGHT, MAX_FEATURED)
         Log.d(TAG, "$packageName publishes ${watchNext.size} Watch Next and ${preview.size} preview programs")
@@ -128,19 +174,11 @@ class TopShelfRepository(context: Context) {
         fun download(uri: Uri) = downloads.getOrPut(uri) {
             async(Dispatchers.IO) { runCatching { open(uri).use(InputStream::readBytes) }.getOrNull() }
         }
-        val upNextArt = watchNext.map { download(it.art.first()) }
+        watchNext.forEach { download(it.art.first()) }
 
-        val upNext = watchNext.mapIndexed { i, program ->
-            async(Dispatchers.Default) {
-                val title = program.title?.takeIf(String::isNotBlank) ?: return@async null
-                val bytes = upNextArt[i].await() ?: return@async null
-                val thumbnail = decodeArt(bytes, THUMB_WIDTH, THUMB_HEIGHT, upscale = true, minWidth = MIN_THUMB_WIDTH) ?: return@async null
-                program.progress?.let { drawProgress(thumbnail, it) }
-                UpNextItem(packageName, title, thumbnail, program.detail, program.intentUri)
-            }
-        }
         // The largest art among a program's poster and thumbnail, since the stage fills the screen.
         var backdrop: Pair<Program, ByteArray>? = null
+        var backdropWidth = 0
         for (program in watchNext.take(MAX_CANDIDATES) + preview.take(MAX_CANDIDATES)) {
             val sized = program.art.map(::download).awaitAll().mapNotNull { bytes ->
                 bytes?.let { landscapeWidth(it) }?.takeIf { it >= MIN_WIDTH }?.let { bytes to it }
@@ -148,15 +186,39 @@ class TopShelfRepository(context: Context) {
             val (bytes, width) = sized.maxByOrNull { it.second } ?: continue
             Log.d(TAG, "$packageName stage art ${width}px wide, from ${sized.map { it.second }} (${program.title})")
             backdrop = program to bytes
+            backdropWidth = width
             break
         }
-        val items = upNext.awaitAll().filterNotNull()
-        val featured = preview.mapNotNull { program ->
+        val isRecommendations = watchNext.isEmpty() && preview.isNotEmpty() && backdropWidth < MIN_FULL_SCREEN_WIDTH
+        val rowPrograms = if (isRecommendations) preview else watchNext
+        val items = rowPrograms.map { program ->
+            val art = download(program.art.first())
+            async(Dispatchers.Default) {
+                val title = program.title?.takeIf(String::isNotBlank) ?: return@async null
+                val bytes = art.await() ?: return@async null
+                val thumbnail = decodeArt(bytes, THUMB_WIDTH, THUMB_HEIGHT, upscale = true, minWidth = MIN_THUMB_WIDTH) ?: return@async null
+                program.progress?.let { drawProgress(thumbnail, it) }
+                UpNextItem(packageName, title, thumbnail, program.detail, program.intentUri)
+            }
+        }.awaitAll().filterNotNull()
+        val featured = if (isRecommendations) emptyList() else preview.mapNotNull { program ->
             program.title?.takeIf(String::isNotBlank)?.let { title ->
                 ShelfProgram(packageName, title, program.episode, program.description, program.art, program.intentUri)
             }
         }
-        backdrop?.let { (program, bytes) -> ShelfArt(packageName, program.title, bytes, items, featured) }
+        val complete = downloads.values.awaitAll().none { it == null }
+        val stage = backdrop.takeUnless { isRecommendations }
+        val signature = buildString {
+            append(isRecommendations).append(stage?.second?.contentHashCode()).append(stage?.first?.title).append(items.size)
+            rowPrograms.forEach { append('|').append(it.title).append(it.detail).append(it.progress).append(it.intentUri) }
+            featured.forEach { append('|').append(it.title) }
+        }
+        val art = if (stage == null && items.isEmpty() && featured.isEmpty()) {
+            null
+        } else {
+            ShelfArt(packageName, stage?.first?.title, stage?.second, items, isRecommendations, featured, signature)
+        }
+        Loaded(art, complete)
     }
 
     private class Program(
@@ -303,6 +365,8 @@ class TopShelfRepository(context: Context) {
             PreviewPrograms.ASPECT_RATIO_4_3,
         )
         private const val MIN_WIDTH = 480
+        /** Art narrower than this looks soft stretched across the screen, so an app with nothing else shows it as tiles. */
+        private const val MIN_FULL_SCREEN_WIDTH = 1000
         private const val MIN_THUMB_WIDTH = 200
         private const val MAX_CANDIDATES = 3
         private const val MAX_UP_NEXT = 8
@@ -313,5 +377,6 @@ class TopShelfRepository(context: Context) {
         private const val PROGRESS_MIN = 0.04f
         private const val NETWORK_TIMEOUT_MS = 4_000
         private const val CACHE_MS = 15 * 60_000L
+        private const val RETRY_MS = 30_000L
     }
 }

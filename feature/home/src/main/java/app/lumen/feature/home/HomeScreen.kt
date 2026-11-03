@@ -135,7 +135,7 @@ fun HomeScreen(
                 ?: state.allApps.firstOrNull()
         }
     }
-    val shelfArt = rememberShelfArt(hero, state.settings.ambientBackdrop, viewModel::cachedShelfArt, viewModel::shelfArt)
+    val shelfArt = rememberShelfArt(hero, state.settings.ambientBackdrop, viewModel)
     // While an app is being moved, the editor's arrangement shows instead of the saved one.
     val dock = if (editor.active) editor.dock.filterIsInstance<HomeItem.App>().map { it.app } else state.favorites
     val gridItems = if (editor.active) editor.grid else state.grid

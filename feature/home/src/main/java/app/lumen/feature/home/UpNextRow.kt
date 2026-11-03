@@ -38,17 +38,18 @@ import app.lumen.core.designsystem.LumenText
 import app.lumen.core.designsystem.LumenType
 
 /**
- * The focused app's Watch Next row at the foot of the stage, modeled on Continue Watching in
- * Apple's TV app: wide 16:9 tiles under a small heading, running off the right edge when there are
- * more. Up from the dock steps into it; Back or Down steps out again. Tiles show how far along
- * each program is, and their title, episode and time left only while focused.
+ * The focused app's row at the foot of the stage, modeled on Continue Watching in Apple's TV app:
+ * wide 16:9 tiles under a small heading, running off the right edge when there are more. It holds
+ * the app's Watch Next, or its recommendations if that's all it has. Up from the dock steps into it;
+ * Back or Down steps out again. Tiles show how far along each program is, and their title, episode
+ * and time left only while focused.
  */
 @OptIn(ExperimentalComposeUiApi::class)
 @Composable
-internal fun UpNextRow(items: List<UpNextItem>, modifier: Modifier = Modifier) {
+internal fun UpNextRow(items: List<UpNextItem>, heading: String, modifier: Modifier = Modifier) {
     Column(modifier) {
         LumenText(
-            "Up Next",
+            heading,
             LumenType.Section,
             Modifier.padding(start = LumenDimens.SafeHorizontal),
             color = LumenColors.TextSecondary,

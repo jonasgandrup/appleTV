@@ -41,6 +41,8 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import app.lumen.core.apps.AppCategory
 import app.lumen.core.apps.AppInfo
 import app.lumen.core.apps.ShelfArt
@@ -58,7 +60,10 @@ import app.lumen.core.settings.Wallpaper
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.distinctUntilChangedBy
+import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
 import kotlin.math.roundToInt
 
@@ -113,7 +118,11 @@ internal fun Hero(app: AppInfo?, shelfArt: ShelfArt?, visible: Boolean, onRowFoc
         ) { target ->
             // Down into the space the list leaves above the dock's glass, so the row sits right over it.
             if (target != null) {
-                UpNextRow(target.upNext, Modifier.offset(y = LumenDimens.SafeVertical - 6.dp).onFocusChanged { onRowFocus(it.hasFocus) })
+                UpNextRow(
+                    items = target.upNext,
+                    heading = if (target.isRecommendations) "Recommended" else "Up Next",
+                    modifier = Modifier.offset(y = LumenDimens.SafeVertical - 6.dp).onFocusChanged { onRowFocus(it.hasFocus) },
+                )
             }
         }
     }
@@ -129,29 +138,47 @@ private val HeroTitleMaxWidth = 560.dp
  * The [hero]'s own artwork from its TV channels, once focus has rested on it for a moment, so
  * gliding along the dock doesn't fetch and bake art for every tile passed. Art already loaded
  * shows at once. Holds the last art until the next arrives; check its package before using it.
+ *
+ * What's shown stays until something better replaces it. Coming back from an app rereads it, and
+ * again a little later, since apps can take a moment to publish what was just watched.
  */
 @Composable
-internal fun rememberShelfArt(
-    hero: State<AppInfo?>,
-    enabled: Boolean,
-    cached: (AppInfo) -> ShelfArt?,
-    load: suspend (AppInfo) -> ShelfArt?,
-): State<ShelfArt?> {
+internal fun rememberShelfArt(hero: State<AppInfo?>, enabled: Boolean, viewModel: HomeViewModel): State<ShelfArt?> {
     val art = remember { mutableStateOf<ShelfArt?>(null) }
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
     LaunchedEffect(enabled) {
         snapshotFlow { hero.value?.takeIf { enabled } }
             .distinctUntilChangedBy { it?.packageName }
             .collectLatest { app ->
-                art.value = app?.let(cached)
+                art.value = app?.let(viewModel::cachedShelfArt)
                 if (app == null) return@collectLatest
                 delay(SHELF_ART_SETTLE_MS)
-                art.value = load(app)
+                art.value = viewModel.shelfArt(app)
+                var retries = SHELF_ART_RETRIES
+                while (retries-- > 0 && viewModel.shelfArtIncomplete(app)) {
+                    delay(SHELF_ART_RETRY_MS)
+                    art.value = viewModel.refreshShelfArt(app)
+                }
+                lifecycle.currentStateFlow
+                    .map { it.isAtLeast(Lifecycle.State.RESUMED) }
+                    .distinctUntilChanged()
+                    .drop(1)
+                    .collectLatest { resumed ->
+                        if (!resumed) return@collectLatest
+                        viewModel.expireShelfArt()
+                        art.value = viewModel.refreshShelfArt(app)
+                        delay(SHELF_ART_RECHECK_MS)
+                        art.value = viewModel.refreshShelfArt(app)
+                    }
             }
     }
     return art
 }
 
 private const val SHELF_ART_SETTLE_MS = 250L
+private const val SHELF_ART_RETRIES = 3
+private const val SHELF_ART_RETRY_MS = 10_000L
+private const val SHELF_ART_RECHECK_MS = 20_000L
 
 /**
  * The full-screen stage behind everything: the focused app's [shelfArt] when it publishes some,

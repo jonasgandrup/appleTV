@@ -34,6 +34,8 @@ class HomeOverrideService : AccessibilityService() {
     @Volatile
     private var enabled = true
     private var lastRedirect = 0L
+    /** The last thing in front other than the stock home, which Home always passes through first. */
+    private var lastApp: String? = null
     private val handler = Handler(Looper.getMainLooper())
     private var homeHeld = false
     private val onHomeHeld = Runnable {
@@ -57,7 +59,10 @@ class HomeOverrideService : AccessibilityService() {
 
         if (pkg !in StockLaunchers.packages) {
             // The user moved on from the stock home they asked for; resume redirecting.
-            if (pkg !in TRANSIENT_PACKAGES) HomeOverride.resume()
+            if (pkg !in TRANSIENT_PACKAGES) {
+                HomeOverride.resume()
+                lastApp = pkg
+            }
             return
         }
         if (!enabled || HomeOverride.isSuspended()) return
@@ -65,7 +70,8 @@ class HomeOverrideService : AccessibilityService() {
         val now = SystemClock.elapsedRealtime()
         if (now - lastRedirect < DEBOUNCE_MS) return
         lastRedirect = now
-        runCatching { startActivity(HomeOverride.lumenHomeIntent(this)) }
+        val fromApp = lastApp != null && lastApp != packageName
+        runCatching { startActivity(HomeOverride.lumenHomeIntent(this).putExtra(HomeOverride.EXTRA_FROM_APP, fromApp)) }
     }
 
     override fun onKeyEvent(event: KeyEvent): Boolean {

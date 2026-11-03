@@ -10,7 +10,8 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 
 class MainActivity : ComponentActivity() {
 
-    private val homePresses = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+    /** True when Home was pressed inside another app rather than on the home screen. */
+    private val homePresses = MutableSharedFlow<Boolean>(extraBufferCapacity = 1)
     private val controlCenterRequests = MutableSharedFlow<Unit>(replay = 1, extraBufferCapacity = 1)
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -27,7 +28,7 @@ class MainActivity : ComponentActivity() {
         super.onNewIntent(intent)
         when {
             intent.getBooleanExtra(HomeOverride.EXTRA_CONTROL_CENTER, false) -> controlCenterRequests.tryEmit(Unit)
-            intent.hasCategory(Intent.CATEGORY_HOME) -> homePresses.tryEmit(Unit)
+            intent.hasCategory(Intent.CATEGORY_HOME) -> homePresses.tryEmit(intent.getBooleanExtra(HomeOverride.EXTRA_FROM_APP, false))
         }
     }
 }

@@ -51,6 +51,9 @@ object HomeOverride {
     /** An intent extra: open Control Center once Lumen is in front, for Home held down. */
     const val EXTRA_CONTROL_CENTER = "app.lumen.core.system.CONTROL_CENTER"
 
+    /** An intent extra: Home was pressed inside another app, not on Lumen's own home screen. */
+    const val EXTRA_FROM_APP = "app.lumen.core.system.FROM_APP"
+
     /** An intent that brings Lumen's home activity to the front. */
     internal fun lumenHomeIntent(context: Context): Intent =
         Intent(Intent.ACTION_MAIN)

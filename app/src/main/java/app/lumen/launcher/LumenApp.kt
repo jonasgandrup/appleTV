@@ -34,14 +34,18 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 private enum class Destination { Home, Settings }
 
 @Composable
-fun LumenApp(container: AppContainer, homePresses: Flow<Unit>, controlCenterRequests: MutableSharedFlow<Unit>) {
+fun LumenApp(container: AppContainer, homePresses: Flow<Boolean>, controlCenterRequests: MutableSharedFlow<Unit>) {
     var destination by rememberSaveable { mutableStateOf(Destination.Home) }
-    // Re-broadcast Home presses to the home screen only once it's showing.
+    // Re-broadcast Home presses to the home screen only once it's showing. Coming back from an app
+    // isn't one: focus stays on the tile the app was opened from, as on tvOS.
     val homeScreenPresses = remember { MutableSharedFlow<Unit>(extraBufferCapacity = 1) }
 
     LaunchedEffect(homePresses) {
-        homePresses.collect {
-            if (destination == Destination.Home) homeScreenPresses.tryEmit(Unit) else destination = Destination.Home
+        homePresses.collect { fromApp ->
+            when {
+                destination != Destination.Home -> destination = Destination.Home
+                !fromApp -> homeScreenPresses.tryEmit(Unit)
+            }
         }
     }
 
