@@ -385,7 +385,7 @@ private fun NowPlayingTile(playing: NowPlaying, appName: String?, onOpen: () -> 
                 (playing.artist ?: appName)?.let { LumenText(it, LumenType.Caption, color = look.content.copy(alpha = 0.65f), maxLines = 1) }
             }
         }
-        if (playing.durationMs > 0) Timeline(playing)
+        if (playing.durationMs > 0) Timeline(playing, Modifier.padding(horizontal = 6.dp))
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterHorizontally)) {
             RoundButton(playing::previous, size = SmallRoundButtonSize) { color -> RoundGlyph("Previous", R.drawable.ic_cc_previous, color) }
             RoundButton(playing::playPause, size = SmallRoundButtonSize) { color ->
@@ -398,7 +398,7 @@ private fun NowPlayingTile(playing: NowPlaying, appName: String?, onOpen: () -> 
 
 /** tvOS's timeline: elapsed time, a thin bar, and the time remaining. */
 @Composable
-private fun Timeline(playing: NowPlaying) {
+internal fun Timeline(playing: NowPlaying, modifier: Modifier = Modifier) {
     val position by produceState(playing.positionMs(), playing) {
         while (true) {
             value = playing.positionMs()
@@ -408,7 +408,7 @@ private fun Timeline(playing: NowPlaying) {
     }
     val fraction = (position.toFloat() / playing.durationMs).coerceIn(0f, 1f)
     Row(
-        Modifier.padding(horizontal = 6.dp),
+        modifier,
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {

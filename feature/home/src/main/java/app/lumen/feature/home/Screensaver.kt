@@ -5,11 +5,17 @@ import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -19,6 +25,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
@@ -37,6 +44,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.FilterQuality
@@ -79,7 +89,6 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
-import kotlin.math.abs
 
 private const val AERIAL_MS = 75_000L
 private const val SLIDE_MS = 40_000
@@ -91,10 +100,8 @@ private const val DETAILS_MS = 6_000L
 private const val PHOTO_WIDTH = 1920
 /** A track change can report "not playing" for a moment, which shouldn't bring the scenery back. */
 private const val MUSIC_LINGER_MS = 5_000L
-/** One pixel at a time, this rarely, so the drift is too slow to see and costs almost nothing to draw. */
-private const val DRIFT_STEP_MS = 2_000L
-private const val DRIFT_X_PX = 30
-private const val DRIFT_Y_PX = 21
+/** How long a cover opened with a click stays up, so nothing large stays put on the panel if it's left there. */
+private const val COVER_MS = 60_000L
 private const val MUSIC_FADE_MS = 1_000
 
 /**
@@ -114,19 +121,22 @@ private class SaverControls {
     var showDetails by mutableStateOf(true)
     /** Which entry of the category picker is highlighted; null when it's closed. */
     var picking by mutableStateOf<Int?>(null)
+    /** The song's cover is filling the screen, after a click on the song card. */
+    var showCover by mutableStateOf(false)
 }
 
 /**
  * Wraps the home screen and fades in a screen saver after [timeoutMinutes] without input while
  * Lumen is in front. The remote works as on tvOS while it runs: Up picks a category, Left and Right
  * change scene, Down names what's showing, and anything else stops it. The key that stops it is
- * swallowed, so waking never opens an app. While [nowPlaying] is playing, the album art takes over
- * from the scenery, and any key stops it.
+ * swallowed, so waking never opens an app. While [nowPlaying] is playing, a small card names the song
+ * over the scenery. A click fills the screen with its cover, and a click, Back or any direction goes
+ * back to the scenery, where Back stops the screen saver as usual.
  *
  * While the timer runs Lumen holds the screen on, so Google TV's own ambient mode can't start
  * first; it lets go [MAX_SCREENSAVER_MS] into the screen saver, unless [nowPlaying] is playing, since
- * the TV sleeping would cut the music off. With [holdOff], the screen saver doesn't start by itself,
- * though Back can still start one.
+ * the TV sleeping would cut the music off and the scenery keeps the screen moving meanwhile. With
+ * [holdOff], the screen saver doesn't start by itself, though Back can still start one.
  */
 @Composable
 internal fun ScreensaverHost(
@@ -162,6 +172,7 @@ internal fun ScreensaverHost(
     // Stays on the last song while it fades away, even once its app has closed its session.
     var song by remember { mutableStateOf<NowPlaying?>(null) }
     if (nowPlaying != null) song = nowPlaying
+    val music = song.takeIf { musicShown }
     // Your Photos is on offer only with photos to show.
     val photos by produceState<List<String>>(emptyList(), showing) { value = loadPhotos() }
     val categories = remember(photos) {
@@ -188,6 +199,7 @@ internal fun ScreensaverHost(
         if (!showing) return@LaunchedEffect
         controls.picking = null
         controls.showDetails = true
+        controls.showCover = false
     }
 
     LaunchedEffect(resumed, timeoutMinutes, inputCount, holdOff) {
@@ -200,7 +212,7 @@ internal fun ScreensaverHost(
     }
 
     val view = LocalView.current
-    val keepScreenOn = resumed && timeoutMinutes > 0 && (!expired || nowPlaying?.isPlaying == true)
+    val keepScreenOn = resumed && timeoutMinutes > 0 && (!expired || (isPlaying && showing))
     DisposableEffect(view, keepScreenOn) {
         view.keepScreenOn = keepScreenOn
         onDispose { view.keepScreenOn = false }
@@ -208,7 +220,11 @@ internal fun ScreensaverHost(
 
     /** The screen saver's answer to a key pressed while it runs. False means it should stop. */
     fun handleKey(key: Key): Boolean {
-        if (musicShown) return false
+        if (controls.showCover) {
+            if (key !in CoverClosingKeys) return false
+            controls.showCover = false
+            return true
+        }
         val picking = controls.picking
         if (picking != null) {
             when (key) {
@@ -229,6 +245,10 @@ internal fun ScreensaverHost(
             Key.DirectionLeft -> controls.slide--
             Key.DirectionUp -> controls.picking = categories.indexOf(type).coerceAtLeast(0)
             Key.DirectionDown -> controls.showDetails = !controls.showDetails
+            Key.DirectionCenter, Key.Enter, Key.NumPadEnter -> {
+                if (music == null) return false
+                controls.showCover = true
+            }
             else -> return false
         }
         return true
@@ -258,10 +278,15 @@ internal fun ScreensaverHost(
         // Nothing behind the screen saver needs to keep moving.
         CompositionLocalProvider(LocalFocusIdle provides (focusIdle && !showing)) { content() }
         AnimatedVisibility(showing, enter = fadeIn(tween(1_500)), exit = fadeOut(tween(300))) {
-            Screensaver(type.takeIf { it in categories } ?: ScreensaverType.Aerials, showClock, photos, categories, controls, song.takeIf { musicShown })
+            Screensaver(type.takeIf { it in categories } ?: ScreensaverType.Aerials, showClock, photos, categories, controls, music)
         }
     }
 }
+
+private val CoverClosingKeys = setOf(
+    Key.DirectionLeft, Key.DirectionRight, Key.DirectionUp, Key.DirectionDown,
+    Key.DirectionCenter, Key.Enter, Key.NumPadEnter, Key.Back,
+)
 
 /** One of the bundled clips, rendered by tools/render_aerials.py so that each loops perfectly. */
 private enum class Aerial(val asset: String, val title: String, val subtitle: String) {
@@ -302,15 +327,19 @@ private fun Screensaver(
         // Stays on the last song while it fades away.
         var lastMusic by remember { mutableStateOf(music) }
         if (music != null) lastMusic = music
-        Crossfade(targetState = music != null, animationSpec = tween(MUSIC_FADE_MS), label = "musicScene") { showMusic ->
+        LaunchedEffect(controls.showCover, music == null) {
+            if (music != null && controls.showCover) delay(COVER_MS)
+            controls.showCover = false
+        }
+        Crossfade(targetState = controls.showCover, animationSpec = tween(MUSIC_FADE_MS), label = "musicScene") { showCover ->
             val shown = lastMusic
             when {
-                showMusic && shown != null -> MusicScene(shown)
+                showCover && shown != null -> MusicScene(shown)
                 aerial != null -> AerialVideo(aerial)
                 else -> PhotoSlides(photos, index)
             }
         }
-        AnimatedVisibility(showDetails && music == null, enter = fadeIn(tween(500)), exit = fadeOut(tween(800))) {
+        AnimatedVisibility(showDetails && !controls.showCover, enter = fadeIn(tween(500)), exit = fadeOut(tween(800))) {
             Details(aerial?.title ?: "Your Photos", aerial?.subtitle)
         }
         // Changes sides with each scene, so it never stays in one place on the panel.
@@ -324,6 +353,19 @@ private fun Screensaver(
             Crossfade(targetState = clockLeft, animationSpec = tween(CROSSFADE_MS), label = "clockSide") { left ->
                 Box(Modifier.fillMaxSize().padding(horizontal = LumenDimens.SafeHorizontal, vertical = LumenDimens.SafeVertical)) {
                     TimeOfDay(Modifier.align(if (left) Alignment.BottomStart else Alignment.BottomEnd), alignEnd = !left)
+                }
+            }
+        }
+        // On the side the clock isn't, and it changes sides too.
+        AnimatedVisibility(
+            music != null && !controls.showCover,
+            enter = fadeIn(tween(500)),
+            exit = fadeOut(tween(800)),
+            modifier = Modifier.fillMaxSize(),
+        ) {
+            Crossfade(targetState = clockLeft, animationSpec = tween(CROSSFADE_MS), label = "songSide") { left ->
+                Box(Modifier.fillMaxSize().padding(horizontal = LumenDimens.SafeHorizontal, vertical = LumenDimens.SafeVertical)) {
+                    lastMusic?.let { SongCard(it, Modifier.align(if (left) Alignment.BottomEnd else Alignment.BottomStart)) }
                 }
             }
         }
@@ -443,22 +485,14 @@ private fun TimeOfDay(modifier: Modifier, alignEnd: Boolean) {
 }
 
 /**
- * What's playing, filling the screen as tvOS's Now Playing does: the album cover large, with the
- * song and artist beside it, over a soft blur of the cover. Everything creeps slowly around so it
- * doesn't stay in one place on the panel.
+ * The song, filling the screen as tvOS's Now Playing does: the album cover large and centered, with
+ * the song and artist under it, over a soft blur of the cover.
  */
 @Composable
 private fun MusicScene(playing: NowPlaying) {
     val blur by produceState<ImageBitmap?>(null, playing.art) {
         val art = playing.art
         value = art?.let { withContext(Dispatchers.Default) { runCatching { it.frosted().asImageBitmap() }.getOrNull() } }
-    }
-    var step by remember { mutableIntStateOf(0) }
-    LaunchedEffect(Unit) {
-        while (true) {
-            delay(DRIFT_STEP_MS)
-            step++
-        }
     }
     Box(Modifier.fillMaxSize().background(LumenColors.Background)) {
         Crossfade(targetState = blur, animationSpec = tween(MUSIC_FADE_MS), label = "musicBackdrop") { image ->
@@ -474,47 +508,96 @@ private fun MusicScene(playing: NowPlaying) {
             contentKey = { it.title to it.artist },
             transitionSpec = { fadeIn(tween(MUSIC_FADE_MS)) togetherWith fadeOut(tween(MUSIC_FADE_MS / 2)) using null },
             contentAlignment = Alignment.Center,
-            modifier = Modifier
-                .align(Alignment.Center)
-                .graphicsLayer {
-                    translationX = drift(step, DRIFT_X_PX).toFloat()
-                    translationY = drift(step, DRIFT_Y_PX).toFloat()
-                },
+            modifier = Modifier.align(Alignment.Center),
             label = "musicSong",
         ) { song ->
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(36.dp)) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 AlbumCover(song)
-                Column(Modifier.widthIn(max = MusicTextMaxWidth), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    LumenText(song.title, LumenType.Title, maxLines = 3)
-                    song.artist?.let { LumenText(it, LumenType.Headline, color = LumenColors.TextSecondary, maxLines = 2) }
+                Row(
+                    Modifier.padding(top = 16.dp).widthIn(max = MusicTextMaxWidth),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    AudioBars(song.isPlaying, Modifier)
+                    LumenText(song.title, LumenType.Headline, Modifier.weight(1f, fill = false), maxLines = 1)
                 }
+                song.artist?.let { LumenText(it, LumenType.Body, Modifier.widthIn(max = MusicTextMaxWidth), color = LumenColors.TextSecondary, maxLines = 1) }
+                if (song.durationMs > 0) Timeline(song, Modifier.padding(top = 14.dp).width(CoverSize))
             }
         }
     }
 }
 
-/** The cover, smaller when its image is too small to stay sharp, or a plain note when there's none. */
+/** The cover, or a plain note when there's none. */
 @Composable
 private fun AlbumCover(playing: NowPlaying) {
     val shape = RoundedCornerShape(16.dp)
     val art = remember(playing.art) { playing.art?.asImageBitmap() }
     if (art != null) {
-        val size = if (art.width >= SHARP_COVER_PX) CoverSize else SmallCoverSize
-        Image(art, null, Modifier.size(size).clip(shape), contentScale = ContentScale.Crop, filterQuality = FilterQuality.High)
+        Image(art, null, Modifier.size(CoverSize).clip(shape), contentScale = ContentScale.Crop, filterQuality = FilterQuality.High)
     } else {
-        Box(Modifier.size(SmallCoverSize).background(LumenColors.Surface, shape), contentAlignment = Alignment.Center) {
+        Box(Modifier.size(CoverSize).background(LumenColors.Surface, shape), contentAlignment = Alignment.Center) {
             Image(painterResource(R.drawable.ic_status_music), null, Modifier.size(72.dp))
         }
     }
 }
 
-/** A slow back-and-forth of whole pixels between -[amplitude] and [amplitude]. */
-private fun drift(step: Int, amplitude: Int): Int = abs((step + amplitude).mod(amplitude * 4) - amplitude * 2) - amplitude
+/** What's playing, on a small sheet of glass over the scenery, with its artwork when the app shares some. */
+@Composable
+private fun SongCard(playing: NowPlaying, modifier: Modifier) {
+    Row(
+        modifier
+            .widthIn(max = SongCardMaxWidth)
+            .liquidGlass(16.dp, tint = LumenColors.GlassTintDim)
+            .padding(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        val art = remember(playing.art) { playing.art?.asImageBitmap() }
+        if (art != null) {
+            Image(art, null, Modifier.size(44.dp).clip(RoundedCornerShape(8.dp)), contentScale = ContentScale.Crop, filterQuality = FilterQuality.High)
+        }
+        Column(Modifier.weight(1f, fill = false)) {
+            LumenText(playing.title, LumenType.Body, maxLines = 1)
+            playing.artist?.let { LumenText(it, LumenType.Caption, color = LumenColors.TextSecondary, maxLines = 1) }
+        }
+        AudioBars(playing.isPlaying, Modifier.padding(end = 6.dp))
+    }
+}
 
+/** Three small bars that move while music plays and lie flat when it doesn't. Read while drawing, so they never recompose anything. */
+@Composable
+private fun AudioBars(moving: Boolean, modifier: Modifier) {
+    val transition = rememberInfiniteTransition(label = "audioBars")
+    val levels = AudioBarPeriodsMs.map { period ->
+        transition.animateFloat(
+            initialValue = AUDIO_BAR_MIN,
+            targetValue = 1f,
+            animationSpec = infiniteRepeatable(tween(period, easing = FastOutSlowInEasing), RepeatMode.Reverse),
+            label = "audioBar",
+        )
+    }
+    Canvas(modifier.size(width = 14.dp, height = 14.dp)) {
+        val gap = 2.dp.toPx()
+        val width = (size.width - gap * (levels.size - 1)) / levels.size
+        levels.forEachIndexed { i, level ->
+            val height = size.height * (if (moving) level.value else AUDIO_BAR_MIN)
+            drawRoundRect(
+                LumenColors.TextPrimary,
+                topLeft = Offset(i * (width + gap), size.height - height),
+                size = Size(width, height),
+                cornerRadius = CornerRadius(width / 2),
+            )
+        }
+    }
+}
+
+private val AudioBarPeriodsMs = listOf(430, 610, 520)
+private const val AUDIO_BAR_MIN = 0.2f
+
+private val SongCardMaxWidth = 320.dp
 private const val MUSIC_BACKDROP_DIM = 0.4f
-private const val SHARP_COVER_PX = 400
 private val CoverSize = 300.dp
-private val SmallCoverSize = 200.dp
 private val MusicTextMaxWidth = 440.dp
 
 /** Up's row of categories along the top of the screen. It isn't focusable: the host's key handling drives it. */
