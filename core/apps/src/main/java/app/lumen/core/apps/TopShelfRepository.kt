@@ -59,7 +59,7 @@ class ShelfArt(
 class UpNextItem(
     val packageName: String,
     val title: String,
-    /** Tile art at [TopShelfRepository.THUMB_WIDTH] by [TopShelfRepository.THUMB_HEIGHT], with the progress bar drawn in. */
+    /** Tile art with the progress bar drawn in: 16:9, sized for the row it's shown in. */
     val thumbnail: Bitmap,
     /** Where the user is, like "S3, E4 · 23 min left", leaving out whatever the app didn't say. */
     val detail: String?,
@@ -258,7 +258,7 @@ class TopShelfRepository(context: Context) {
         val recommendations = if (onlySmallArt) {
             preview.map { program ->
                 val art = download(program.art.first())
-                async(Dispatchers.Default) { art.await()?.let { upNextItem(packageName, program, it) } }
+                async(Dispatchers.Default) { art.await()?.let { upNextItem(packageName, program, it, large = true) } }
             }.awaitAll().filterNotNull()
         } else {
             emptyList()
@@ -288,9 +288,13 @@ class TopShelfRepository(context: Context) {
     }
 
     /** The tile for [program], or null if it has no title or its art is too small to use. */
-    private fun upNextItem(packageName: String, program: Program, art: ByteArray): UpNextItem? {
+    private fun upNextItem(packageName: String, program: Program, art: ByteArray, large: Boolean = false): UpNextItem? {
         val title = program.title?.takeIf(String::isNotBlank) ?: return null
-        val thumbnail = decodeArt(art, THUMB_WIDTH, THUMB_HEIGHT, upscale = true, minWidth = MIN_THUMB_WIDTH) ?: return null
+        val thumbnail = if (large) {
+            decodeArt(art, LARGE_THUMB_WIDTH, LARGE_THUMB_HEIGHT, upscale = false, minWidth = MIN_THUMB_WIDTH)
+        } else {
+            decodeArt(art, THUMB_WIDTH, THUMB_HEIGHT, upscale = true, minWidth = MIN_THUMB_WIDTH)
+        } ?: return null
         program.progress?.let { drawProgress(thumbnail, it) }
         return UpNextItem(packageName, title, thumbnail, program.detail, program.intentUri, program.place)
     }
@@ -431,6 +435,10 @@ class TopShelfRepository(context: Context) {
         /** Up Next tiles are 16:9, unlike the dock's; this is their focused size in pixels. */
         const val THUMB_WIDTH = 448
         const val THUMB_HEIGHT = 252
+
+        /** The most a tile in an app's own row decodes, its size on screen; smaller art keeps its own size. */
+        private const val LARGE_THUMB_WIDTH = 782
+        private const val LARGE_THUMB_HEIGHT = 440
 
         private const val TAG = "TopShelf"
         private val WATCH_NEXT_URI = WatchNextPrograms.CONTENT_URI

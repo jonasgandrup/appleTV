@@ -8,7 +8,7 @@ Atrium replaces the Google TV home screen with one modelled on Apple TV's, inclu
 
 ## The home screen
 
-Move along the top row and the screen fills with artwork from that app, with nothing else on it. A small arrow shows there's more above.
+Move along the top row and the screen fills with artwork from that app, with nothing else on it. A small arrow shows there's more above, and the tops of the row below peek in at the bottom edge.
 
 Press **Up** and the picture opens to full screen, with **Play** and page dots. **Left** and **Right** change program, and it moves on by itself after a while.
 
@@ -18,7 +18,7 @@ Press **Up** and the picture opens to full screen, with **Play** and page dots. 
 
 ![Drops of God in full screen, with its title and a Play button](docs/images/full-screen.jpg)
 
-Apps with no artwork light the screen in their own color instead. Apps that only share small thumbnails, like YouTube, show a row of them above the top row, so nothing gets stretched and blurry, and the screen takes on the color of the selected thumbnail.
+Apps with no artwork light the screen in their own color instead. Apps that only share small thumbnails, like YouTube, show a row of large tiles above the top row, so nothing gets stretched and blurry, and the screen takes on the color of the selected thumbnail.
 
 ## Continue Watching
 

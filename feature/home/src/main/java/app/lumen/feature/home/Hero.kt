@@ -131,6 +131,10 @@ internal fun Hero(
                     firstTile = firstRowTile,
                     onOptions = onProgramOptions,
                     onItemFocused = onRecommendationFocused,
+                    tileWidth = LumenDimens.ShelfRowTileWidth,
+                    tileHeight = LumenDimens.ShelfRowTileHeight,
+                    focusScale = SHELF_ROW_FOCUS_SCALE,
+                    idleFocusScale = SHELF_ROW_IDLE_FOCUS_SCALE,
                     modifier = Modifier.offset(y = LumenDimens.SafeVertical - 6.dp),
                 )
             }
@@ -139,6 +143,10 @@ internal fun Hero(
 }
 
 private val HeroTitleMaxWidth = 560.dp
+
+/** Large tiles grow less, so they stay clear of their neighbors. */
+private const val SHELF_ROW_FOCUS_SCALE = 1.05f
+private const val SHELF_ROW_IDLE_FOCUS_SCALE = 1.07f
 
 /**
  * The [hero]'s own artwork from its TV channels, once focus has rested on it for a moment, so
@@ -272,10 +280,11 @@ internal fun Backdrop(
 }
 
 /**
- * The app's artwork, full bleed, kept as bright as the dock's legibility allows, since at rest
- * there's nothing else on the stage. In full screen ([hasText]) a pool of shade at the lower left
- * keeps the program's text readable over any lettering in the art. Drawn onto [bitmap] itself, which
- * is freshly decoded for this, so a full-screen bitmap is never copied. Opaque. Blocking.
+ * The app's artwork, full bleed. At rest it stays bright right down behind the dock, as on tvOS,
+ * where the dock's own glass does the dimming. In full screen ([hasText]) it darkens toward the
+ * bottom, with a pool of shade at the lower left, keeping the program's text and the page dots
+ * readable over anything in the art. Drawn onto [bitmap] itself, which is freshly decoded for this,
+ * so a full-screen bitmap is never copied. Opaque. Blocking.
  */
 private fun bakeArtwork(bitmap: Bitmap, hasText: Boolean): Bitmap {
     val canvas = Canvas(bitmap)
@@ -284,7 +293,7 @@ private fun bakeArtwork(bitmap: Bitmap, hasText: Boolean): Bitmap {
     val scrim = Paint().apply { isDither = true }
     scrim.shader = LinearGradient(
         0f, 0f, 0f, height,
-        intArrayOf(0x33000000, 0x00000000, 0x1A000000, 0xB3000000.toInt()),
+        if (hasText) intArrayOf(0x33000000, 0x00000000, 0x1A000000, 0xB3000000.toInt()) else intArrayOf(0x33000000, 0x00000000, 0x0D000000, 0x59000000),
         floatArrayOf(0f, 0.25f, 0.55f, 1f),
         Shader.TileMode.CLAMP,
     )

@@ -30,6 +30,7 @@ import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import app.lumen.core.apps.UpNextItem
 import app.lumen.core.apps.openUpNext
@@ -45,7 +46,8 @@ import app.lumen.core.designsystem.LumenType
  * and their title, episode and time left only while focused, after the name [appName] gives their
  * app when the row mixes apps. Holding select on a tile asks for [onOptions], with its bounds in the
  * window to anchor a menu to. [firstTile] takes focus when something enters the row for the first
- * time, or when a tile goes away. [onItemFocused] hears which tile has focus.
+ * time, or when a tile goes away. [onItemFocused] hears which tile has focus. [headingAlpha] is read
+ * while drawing, so it can animate without recomposing the row.
  */
 @OptIn(ExperimentalComposeUiApi::class)
 @Composable
@@ -57,9 +59,19 @@ internal fun UpNextRow(
     modifier: Modifier = Modifier,
     appName: (String) -> String? = { null },
     onItemFocused: (UpNextItem) -> Unit = {},
+    headingAlpha: () -> Float = { 1f },
+    tileWidth: Dp = LumenDimens.ProgramTileWidth,
+    tileHeight: Dp = LumenDimens.ProgramTileHeight,
+    focusScale: Float = PROGRAM_FOCUS_SCALE,
+    idleFocusScale: Float = PROGRAM_IDLE_FOCUS_SCALE,
 ) {
     Column(modifier) {
-        LumenText(heading, LumenType.Section, Modifier.padding(start = LumenDimens.SafeHorizontal), color = LumenColors.TextSecondary)
+        LumenText(
+            heading,
+            LumenType.Section,
+            Modifier.padding(start = LumenDimens.SafeHorizontal).graphicsLayer { alpha = headingAlpha() },
+            color = LumenColors.TextSecondary,
+        )
         LazyRow(
             modifier = Modifier
                 .fillMaxWidth()
@@ -69,7 +81,17 @@ internal fun UpNextRow(
             horizontalArrangement = Arrangement.spacedBy(LumenDimens.TileSpacing),
         ) {
             itemsIndexed(items) { index, item ->
-                UpNextTile(item, appName(item.packageName), onOptions, onItemFocused, if (index == 0) Modifier.focusRequester(firstTile) else Modifier)
+                UpNextTile(
+                    item,
+                    appName(item.packageName),
+                    onOptions,
+                    onItemFocused,
+                    if (index == 0) Modifier.focusRequester(firstTile) else Modifier,
+                    tileWidth,
+                    tileHeight,
+                    focusScale,
+                    idleFocusScale,
+                )
             }
         }
     }
@@ -83,6 +105,10 @@ private fun UpNextTile(
     onOptions: (UpNextItem, Rect) -> Unit,
     onFocused: (UpNextItem) -> Unit,
     focusModifier: Modifier,
+    width: Dp,
+    height: Dp,
+    focusScale: Float,
+    idleFocusScale: Float,
 ) {
     val context = LocalContext.current
     val view = LocalView.current
@@ -92,7 +118,7 @@ private fun UpNextTile(
     var focused by remember { mutableStateOf(false) }
     // Timed like a tile's own label, so the text arrives with the tile's growth.
     val labelAlpha by animateFloatAsState(if (focused) 1f else 0f, tween(220), label = "upNextLabel")
-    Column(Modifier.width(LumenDimens.ProgramTileWidth)) {
+    Column(Modifier.width(width)) {
         AppTile(
             label = item.title,
             art = art,
@@ -103,11 +129,11 @@ private fun UpNextTile(
                 openUpNext(context, item, zoom.toBundle())
             },
             onLongClick = { onOptions(item, bounds[0]) },
-            width = LumenDimens.ProgramTileWidth,
-            height = LumenDimens.ProgramTileHeight,
+            width = width,
+            height = height,
             showLabel = false,
-            focusScale = PROGRAM_FOCUS_SCALE,
-            idleFocusScale = PROGRAM_IDLE_FOCUS_SCALE,
+            focusScale = focusScale,
+            idleFocusScale = idleFocusScale,
             tileModifier = focusModifier
                 .onFocusChanged {
                     focused = it.isFocused

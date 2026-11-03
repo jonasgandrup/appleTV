@@ -51,6 +51,10 @@ object LumenDimens {
     val ProgramTileWidth = 205.dp
     val ProgramTileHeight = 115.dp
 
+    /** tvOS's Top Shelf row of 16:9 content, 782 by 440 pt: two tiles across with a peek of the third. */
+    val ShelfRowTileWidth = 391.dp
+    val ShelfRowTileHeight = 220.dp
+
     /** The dock's glass around its tiles: tight enough that a focused tile nearly fills it, as on tvOS. */
     val DockInset = 13.dp
 

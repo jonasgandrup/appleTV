@@ -83,8 +83,10 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 
-/** The dock, plus the room below it. What's further down stays out of sight until focus goes there, leaving the stage calm. */
+/** The dock, plus a peek of what's below it, as on tvOS, where the tops of the next row hint at more. */
 private val ShelfAreaHeight = LumenDimens.TileHeight + LumenDimens.DockInset * 2 + 36.dp
+/** Lifts Continue Watching at rest, into the room its heading leaves while hidden, so its tiles' tops show. */
+private val ContinuePeekLift = 15.dp
 private const val SHELF_KEY = "shelf"
 private const val CONTINUE_KEY = "continue"
 private const val GRID_KEY = "grid"
@@ -421,7 +423,7 @@ fun HomeScreen(
 
                 // The dock and grid slide off for the full-screen Top Shelf, staying in place for focus to come back to.
                 val slidOff by animateFloatAsState(if (isFullScreen) 1f else 0f, tween(450, easing = FastOutSlowInEasing), label = "slidOff")
-                val belowAlpha by animateFloatAsState(if (browsingBelow) 1f else 0f, tween(300), label = "belowAlpha")
+                val belowAmount by animateFloatAsState(if (browsingBelow) 1f else 0f, tween(300), label = "belowAmount")
                 Column(Modifier.fillMaxSize()) {
                     StageTitle(
                         hero = hero,
@@ -475,8 +477,9 @@ fun HomeScreen(
                                     firstTile = continueFirstTile,
                                     onOptions = { item, bounds -> programOptionsFor = ProgramOptions(item, bounds, removable = true) },
                                     appName = { pkg -> state.allApps.find { it.packageName == pkg }?.label },
+                                    headingAlpha = { belowAmount },
                                     modifier = Modifier
-                                        .graphicsLayer { alpha = belowAlpha }
+                                        .graphicsLayer { translationY = -(1f - belowAmount) * ContinuePeekLift.toPx() }
                                         .padding(top = 4.dp, bottom = 4.dp)
                                         .onFocusChanged {
                                             continueHasFocus = it.hasFocus
@@ -496,9 +499,7 @@ fun HomeScreen(
                                 lifted = editor.lifted,
                                 firstTileFocus = if (dock.isEmpty()) firstFocus else null,
                                 settingsFocus = settingsFocus,
-                                modifier = Modifier
-                                    .graphicsLayer { alpha = belowAlpha }
-                                    .onFocusChanged { if (it.hasFocus) browsingBelow = true },
+                                modifier = Modifier.onFocusChanged { if (it.hasFocus) browsingBelow = true },
                             )
                         }
                     }
