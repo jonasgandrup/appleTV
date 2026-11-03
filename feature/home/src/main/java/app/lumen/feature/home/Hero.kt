@@ -36,10 +36,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Rect
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
@@ -73,35 +70,25 @@ import kotlinx.coroutines.withContext
 import kotlin.math.roundToInt
 
 /**
- * What's on the stage, at the top left where tvOS puts a show's logo: the title of the app's
- * featured program, or the app's own name when it publishes none. It fades through an offscreen
- * layer, so that layer is kept to the size of the text.
- *
- * When the app has a Watch Next row, that sits at the foot of the stage, just above the dock, as
- * Continue Watching does in Apple's TV app.
- *
- * As on tvOS, artwork has the stage to itself at rest: the title and row only show once Up moves
- * focus into the row. The row stays in place while hidden, for focus to find. An app with no artwork
- * keeps both, since there'd be nothing to see otherwise.
+ * What sits on the stage above the dock. As on tvOS, artwork has the stage to itself: its own
+ * lettering already says what it is, and Up opens it to full screen, where the details are. An app
+ * with no artwork gets its name at the top left instead, and one with only thumbnails gets a row of
+ * them, like the tiles some apps choose for their Top Shelf on tvOS.
  */
 @Composable
 internal fun Hero(
     app: AppInfo?,
     shelfArt: ShelfArt?,
     visible: Boolean,
-    onRowFocus: (Boolean) -> Unit,
     firstRowTile: FocusRequester,
-    onProgramOptions: (ShelfArt, UpNextItem, Rect) -> Unit,
+    onProgramOptions: (UpNextItem, Rect) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    var rowFocused by remember { mutableStateOf(false) }
-    val stageIsArt = shelfArt?.hasBackdrop == true
-    val detailsAlpha by animateFloatAsState(if (!stageIsArt || rowFocused) 1f else 0f, tween(250), label = "stageDetails")
     val alpha by animateFloatAsState(if (visible) 1f else 0f, tween(if (visible) 450 else 200), label = "heroAlpha")
     Box(modifier) {
         AnimatedContent(
-            targetState = app?.let { HeroText(it, shelfArt?.title?.takeIf(String::isNotBlank)) },
-            contentKey = { it?.app?.packageName to it?.programTitle },
+            targetState = app?.takeUnless { shelfArt?.hasBackdrop == true },
+            contentKey = { it?.packageName },
             transitionSpec = {
                 (fadeIn(tween(420, delayMillis = 60)) + slideInHorizontally(tween(420)) { it / 30 }) togetherWith
                     fadeOut(tween(180)) using null
@@ -111,14 +98,13 @@ internal fun Hero(
                 .align(Alignment.TopStart)
                 .padding(start = LumenDimens.SafeHorizontal, top = LumenDimens.SafeVertical)
                 .widthIn(max = HeroTitleMaxWidth)
-                .graphicsLayer { this.alpha = alpha * detailsAlpha },
+                .graphicsLayer { this.alpha = alpha },
             label = "hero",
         ) { target ->
             if (target != null) {
-                val title = target.programTitle ?: target.app.label
-                val subtitle = target.app.category.takeIf { target.programTitle == null && it != AppCategory.Other }?.displayName
+                val subtitle = target.category.takeIf { it != AppCategory.Other }?.displayName
                 Column {
-                    LumenText(title, if (title.length <= HERO_DISPLAY_LENGTH) LumenType.Display else LumenType.Title, maxLines = 2)
+                    LumenText(target.label, LumenType.Display, maxLines = 2)
                     if (subtitle != null) {
                         Spacer(Modifier.height(2.dp))
                         LumenText(subtitle, LumenType.Section, color = LumenColors.TextSecondary, maxLines = 1)
@@ -129,38 +115,27 @@ internal fun Hero(
         // Keyed by app, so one app's row fades out as the next one's fades in, and gone entirely
         // while browsing below, so focus can't land in it from the grid.
         AnimatedContent(
-            targetState = shelfArt?.takeIf { visible && it.upNext.isNotEmpty() },
+            targetState = shelfArt?.takeIf { visible && it.recommendations.isNotEmpty() },
             contentKey = { it?.packageName },
             transitionSpec = { fadeIn(tween(300)) togetherWith fadeOut(tween(150)) using null },
             contentAlignment = Alignment.BottomStart,
             modifier = Modifier.align(Alignment.BottomStart).fillMaxWidth(),
-            label = "upNext",
+            label = "recommendations",
         ) { target ->
             // Down into the space the list leaves above the dock's glass, so the row sits right over it.
             if (target != null) {
                 UpNextRow(
-                    items = target.upNext,
-                    heading = if (target.isRecommendations) "Recommended" else "Up Next",
+                    items = target.recommendations,
+                    heading = "Recommended",
                     firstTile = firstRowTile,
-                    onOptions = { item, bounds -> onProgramOptions(target, item, bounds) },
-                    hint = "Press Up for full screen".takeIf { target.featured.isNotEmpty() },
-                    modifier = Modifier
-                        .offset(y = LumenDimens.SafeVertical - 6.dp)
-                        .graphicsLayer { this.alpha = detailsAlpha }
-                        .onFocusChanged {
-                            rowFocused = it.hasFocus
-                            onRowFocus(it.hasFocus)
-                        },
+                    onOptions = onProgramOptions,
+                    modifier = Modifier.offset(y = LumenDimens.SafeVertical - 6.dp),
                 )
             }
         }
     }
 }
 
-private data class HeroText(val app: AppInfo, val programTitle: String?)
-
-/** Titles longer than this drop a size, so a long one doesn't fill the stage. */
-private const val HERO_DISPLAY_LENGTH = 24
 private val HeroTitleMaxWidth = 560.dp
 
 /**
@@ -230,12 +205,9 @@ internal fun Backdrop(
     program: ShelfProgram?,
     loadProgram: suspend (ShelfProgram) -> Bitmap?,
     below: Boolean,
-    /** Focus is in the row on the stage, whose text the art fades back behind. */
-    rowFocused: Boolean,
     frost: LiveFrost,
 ) {
     val belowAmount by animateFloatAsState(if (below) 1f else 0f, tween(450), label = "below")
-    val rowAmount by animateFloatAsState(if (rowFocused) 1f else 0f, tween(250), label = "rowShade")
     val preset = (wallpaper as? Wallpaper.Gradient)?.preset
     val art = app?.art
     val artwork = shelfArt?.takeIf { it.packageName == app?.packageName }
@@ -285,21 +257,11 @@ internal fun Backdrop(
                     }
                     current?.let { drawImage(it, dstSize = stretched, alpha = fade.value) }
                 }
-                // Only ever on screen while the row is, so the picture at rest costs one image and no more.
-                if (rowAmount > 0f && current?.hasAlpha == false) drawRect(RowShade, alpha = rowAmount)
                 if (belowAmount > 0f) frosted?.let { drawImage(it, dstSize = stretched, alpha = belowAmount) }
             },
         )
     }
 }
-
-/** Fades the art to near black behind the row and title, as it does above Continue Watching in Apple's TV app. */
-private val RowShade = Brush.verticalGradient(
-    0f to Color.Black.copy(alpha = 0.5f),
-    0.3f to Color.Black.copy(alpha = 0.6f),
-    0.55f to Color.Black.copy(alpha = 0.82f),
-    1f to Color.Black.copy(alpha = 0.92f),
-)
 
 /**
  * The app's artwork, full bleed, kept as bright as the dock's legibility allows, since at rest

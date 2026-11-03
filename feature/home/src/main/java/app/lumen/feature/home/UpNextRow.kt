@@ -6,7 +6,6 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -41,14 +40,12 @@ import app.lumen.core.designsystem.LumenText
 import app.lumen.core.designsystem.LumenType
 
 /**
- * The focused app's row at the foot of the stage, modeled on Continue Watching in Apple's TV app:
- * wide 16:9 tiles under a small heading, running off the right edge when there are more. It holds
- * the app's Watch Next, or its recommendations if that's all it has. Up from the dock steps into it;
- * Back or Down steps out again. Tiles show how far along each program is, and their title, episode
- * and time left only while focused, after the name [appName] gives their app when the row mixes apps.
- * [hint] appears beside the heading while focus is in the row. Holding select on a tile asks for
- * [onOptions], with its bounds in the window to anchor a menu to. [firstTile] takes focus when
- * something enters the row for the first time, or when a tile goes away.
+ * A row of wide 16:9 program tiles under a small heading, running off the right edge when there are
+ * more, modeled on Continue Watching in Apple's TV app. Tiles show how far along each program is,
+ * and their title, episode and time left only while focused, after the name [appName] gives their
+ * app when the row mixes apps. Holding select on a tile asks for [onOptions], with its bounds in the
+ * window to anchor a menu to. [firstTile] takes focus when something enters the row for the first
+ * time, or when a tile goes away.
  */
 @OptIn(ExperimentalComposeUiApi::class)
 @Composable
@@ -58,15 +55,10 @@ internal fun UpNextRow(
     firstTile: FocusRequester,
     onOptions: (UpNextItem, Rect) -> Unit,
     modifier: Modifier = Modifier,
-    hint: String? = null,
     appName: (String) -> String? = { null },
 ) {
-    var rowFocused by remember { mutableStateOf(false) }
-    Column(modifier.onFocusChanged { rowFocused = it.hasFocus }) {
-        Row(Modifier.padding(start = LumenDimens.SafeHorizontal), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-            LumenText(heading, LumenType.Section, color = LumenColors.TextSecondary)
-            if (hint != null && rowFocused) LumenText(hint, LumenType.Section, color = LumenColors.TextTertiary)
-        }
+    Column(modifier) {
+        LumenText(heading, LumenType.Section, Modifier.padding(start = LumenDimens.SafeHorizontal), color = LumenColors.TextSecondary)
         LazyRow(
             modifier = Modifier
                 .fillMaxWidth()

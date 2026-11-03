@@ -51,18 +51,30 @@ import app.lumen.core.designsystem.LumenType
 import app.lumen.core.designsystem.liquidGlass
 import app.lumen.core.designsystem.tvClickable
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 /**
  * The Top Shelf gone full screen, as Up does on tvOS: the dock slides away, and what the app
  * features fills the screen one program at a time. Left and Right change program, and it moves on
- * by itself after a while, as Apple's carousels do. Down or Back returns to the dock.
+ * by itself after a while, as Apple's carousels do. Down or Back returns to the dock. The programs
+ * on either side are fetched ahead with [preload], so moving on brings picture and text together.
  */
 @Composable
-internal fun FullScreenShelf(programs: List<ShelfProgram>, index: Int, onIndex: (Int) -> Unit, playFocus: FocusRequester) {
+internal fun FullScreenShelf(
+    programs: List<ShelfProgram>,
+    index: Int,
+    onIndex: (Int) -> Unit,
+    playFocus: FocusRequester,
+    preload: suspend (ShelfProgram) -> Unit,
+) {
     val sounds = LocalUiSounds.current
     val context = LocalContext.current
     val program = programs[index]
     LaunchedEffect(index, programs) {
+        launch {
+            preload(programs[(index + 1) % programs.size])
+            preload(programs[(index - 1).mod(programs.size)])
+        }
         delay(ADVANCE_MS)
         onIndex((index + 1) % programs.size)
     }

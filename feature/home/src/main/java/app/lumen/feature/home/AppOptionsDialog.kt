@@ -75,11 +75,10 @@ internal fun AppOptionsDialog(anchor: Rect, options: AppOptions, onDismiss: () -
     }
 }
 
-/** The menu for a program held down in a row. [onRemove] is null for what an app merely recommends, which has nothing to take away. */
+/** The menu for a program held down in a row. [onRemove] is null for what an app merely recommends, which has nothing of the user's to take away. */
 @Composable
 internal fun ProgramOptionsDialog(
     anchor: Rect,
-    removeLabel: String,
     onRemove: (() -> Unit)?,
     appLabel: String?,
     onOpenApp: () -> Unit,
@@ -90,7 +89,7 @@ internal fun ProgramOptionsDialog(
             onDismiss()
             action()
         }
-        if (onRemove != null) MenuRow(removeLabel, run(onRemove), Modifier.focusRequester(firstRow))
+        if (onRemove != null) MenuRow("Remove from Continue Watching", run(onRemove), Modifier.focusRequester(firstRow))
         if (appLabel != null) MenuRow("Open $appLabel", run(onOpenApp), if (onRemove == null) Modifier.focusRequester(firstRow) else Modifier)
     }
 }

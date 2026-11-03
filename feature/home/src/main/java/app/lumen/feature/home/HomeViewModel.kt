@@ -116,6 +116,7 @@ class HomeViewModel(
     fun shelfArtIncomplete(app: AppInfo): Boolean = topShelf.isIncomplete(app.packageName)
     fun expireShelfArt() = topShelf.expireAll()
     suspend fun programBackdrop(program: ShelfProgram): Bitmap? = topShelf.backdrop(program)
+    suspend fun preloadProgram(program: ShelfProgram) = topShelf.preloadBackdrop(program)
 
     private val continuing = MutableStateFlow<List<UpNextItem>>(emptyList())
     /** What the user is in the middle of across all their apps, most recently watched first. */

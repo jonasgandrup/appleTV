@@ -8,6 +8,7 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
@@ -16,6 +17,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -35,7 +37,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
@@ -116,13 +121,12 @@ fun HomeScreen(
     var programOptionsFor by remember { mutableStateOf<ProgramOptions?>(null) }
     // Where focus goes after a program leaves a row, since it was on that program's tile.
     var refocus by remember { mutableStateOf<FocusRequester?>(null) }
-    val upNextFirstTile = remember { FocusRequester() }
+    val recommendationsFirstTile = remember { FocusRequester() }
     val continueFirstTile = remember { FocusRequester() }
     var renaming by remember { mutableStateOf<AppFolder?>(null) }
     var openFolderId by rememberSaveable { mutableStateOf<String?>(null) }
     // Which of the app's featured programs fills the screen; null when the Top Shelf isn't full screen.
     var fullScreen by remember { mutableStateOf<Int?>(null) }
-    var upNextHasFocus by remember { mutableStateOf(false) }
     // A tile that should take focus as soon as it exists: where an app just moved to, say.
     var pendingFocus by remember { mutableStateOf<String?>(null) }
     val playFocus = remember { FocusRequester() }
@@ -361,11 +365,9 @@ fun HomeScreen(
                             }
                             return@onPreviewKeyEvent true
                         }
-                        // Up climbs the stage: dock, then Up Next if the app has it, then full screen if it features anything, then the clock.
+                        // Up from the dock opens what's on the stage to full screen, as on tvOS. Apps with nothing to open let focus move on as usual.
                         if (event.key == Key.DirectionUp && event.type == KeyEventType.KeyDown && !editor.editing && !isFullScreen) {
-                            val nextIsFullScreen = featured.isNotEmpty() &&
-                                (upNextHasFocus || (dockHasFocus && shelfArt.value?.upNext.isNullOrEmpty()))
-                            if (nextIsFullScreen) {
+                            if (featured.isNotEmpty() && dockHasFocus) {
                                 fullScreen = 0
                                 sounds?.move()
                                 return@onPreviewKeyEvent true
@@ -402,7 +404,6 @@ fun HomeScreen(
                     program = stageProgram,
                     loadProgram = viewModel::programBackdrop,
                     below = browsingBelow,
-                    rowFocused = upNextHasFocus,
                     frost = liveFrost,
                 )
 
@@ -413,17 +414,8 @@ fun HomeScreen(
                         hero = hero,
                         shelfArt = shelfArt,
                         visible = !browsingBelow && !editor.editing && !isFullScreen,
-                        onRowFocus = { upNextHasFocus = it },
-                        firstRowTile = upNextFirstTile,
-                        onProgramOptions = { art, item, bounds ->
-                            programOptionsFor = ProgramOptions(
-                                item,
-                                bounds,
-                                removeLabel = "Remove from Up Next",
-                                removable = !art.isRecommendations,
-                                refocus = upNextFirstTile,
-                            )
-                        },
+                        firstRowTile = recommendationsFirstTile,
+                        onProgramOptions = { item, bounds -> programOptionsFor = ProgramOptions(item, bounds, removable = false) },
                         modifier = Modifier.fillMaxWidth().height(heroHeight),
                     )
 
@@ -467,15 +459,7 @@ fun HomeScreen(
                                     items = continueWatching,
                                     heading = "Continue Watching",
                                     firstTile = continueFirstTile,
-                                    onOptions = { item, bounds ->
-                                        programOptionsFor = ProgramOptions(
-                                            item,
-                                            bounds,
-                                            removeLabel = "Remove from Continue Watching",
-                                            removable = true,
-                                            refocus = continueFirstTile,
-                                        )
-                                    },
+                                    onOptions = { item, bounds -> programOptionsFor = ProgramOptions(item, bounds, removable = true) },
                                     appName = { pkg -> state.allApps.find { it.packageName == pkg }?.label },
                                     modifier = Modifier
                                         .padding(top = 4.dp, bottom = 4.dp)
@@ -509,28 +493,12 @@ fun HomeScreen(
                         index = (fullScreen ?: 0).coerceAtMost(featured.lastIndex),
                         onIndex = { fullScreen = it },
                         playFocus = playFocus,
+                        preload = viewModel::preloadProgram,
                     )
                 }
 
-                // tvOS's hint above the dock, naming what Up reveals when the stage shows nothing of it yet.
-                val art = shelfArt.value?.takeIf { it.packageName == hero.value?.packageName }
-                val upReveals = when {
-                    art == null -> null
-                    art.upNext.isEmpty() -> "full screen".takeIf { featured.isNotEmpty() }
-                    art.hasBackdrop -> "Up Next"
-                    else -> null
-                }
-                if (upReveals != null && dockHasFocus && !browsingBelow && !isFullScreen && !editor.editing) {
-                    LumenText(
-                        "Press Up for $upReveals",
-                        LumenType.Caption,
-                        // On glass, since it can land on anything in the artwork, even white lettering.
-                        modifier = Modifier
-                            .align(Alignment.BottomCenter)
-                            .padding(bottom = ShelfAreaHeight + 8.dp)
-                            .liquidGlass(LumenDimens.CapsuleCorner, tint = LumenColors.GlassTintDim)
-                            .padding(horizontal = 12.dp, vertical = 3.dp),
-                    )
+                if (featured.isNotEmpty() && dockHasFocus && !browsingBelow && !isFullScreen && !editor.editing) {
+                    UpArrow(Modifier.align(Alignment.BottomCenter).padding(bottom = ShelfAreaHeight + 8.dp))
                 }
 
                 // The top-right corner, on the stage only: the clock opens Control Center. Settings is a tile at the grid's end, as on tvOS.
@@ -641,11 +609,10 @@ fun HomeScreen(
                     val app = state.allApps.find { it.packageName == options.item.packageName }
                     ProgramOptionsDialog(
                         anchor = options.bounds,
-                        removeLabel = options.removeLabel,
                         onRemove = if (options.removable) {
                             {
                                 viewModel.removeProgram(options.item)
-                                refocus = options.refocus
+                                refocus = continueFirstTile
                             }
                         } else {
                             null
@@ -688,7 +655,6 @@ private fun StageBackdrop(
     program: State<ShelfProgram?>,
     loadProgram: suspend (ShelfProgram) -> Bitmap?,
     below: Boolean,
-    rowFocused: Boolean,
     frost: LiveFrost,
 ) {
     Backdrop(
@@ -698,7 +664,6 @@ private fun StageBackdrop(
         program = program.value,
         loadProgram = loadProgram,
         below = below,
-        rowFocused = rowFocused,
         frost = frost,
     )
 }
@@ -707,19 +672,32 @@ private fun StageBackdrop(
 private class ProgramOptions(
     val item: UpNextItem,
     val bounds: Rect,
-    val removeLabel: String,
     val removable: Boolean,
-    val refocus: FocusRequester,
 )
+
+/** tvOS's small arrow above the dock, saying there's more above. A shade under it keeps it visible on bright art. */
+@Composable
+private fun UpArrow(modifier: Modifier) {
+    Canvas(modifier.size(width = 24.dp, height = 8.dp)) {
+        val stroke = 2.5.dp.toPx()
+        val top = Offset(size.width / 2, stroke / 2)
+        val left = Offset(stroke / 2, size.height - stroke / 2)
+        val right = Offset(size.width - stroke / 2, size.height - stroke / 2)
+        val shade = Offset(0f, 1.dp.toPx())
+        drawLine(Color.Black.copy(alpha = 0.4f), left + shade, top + shade, stroke, StrokeCap.Round)
+        drawLine(Color.Black.copy(alpha = 0.4f), top + shade, right + shade, stroke, StrokeCap.Round)
+        drawLine(Color.White.copy(alpha = 0.85f), left, top, stroke, StrokeCap.Round)
+        drawLine(Color.White.copy(alpha = 0.85f), top, right, stroke, StrokeCap.Round)
+    }
+}
 
 @Composable
 private fun StageTitle(
     hero: State<AppInfo?>,
     shelfArt: State<ShelfArt?>,
     visible: Boolean,
-    onRowFocus: (Boolean) -> Unit,
     firstRowTile: FocusRequester,
-    onProgramOptions: (ShelfArt, UpNextItem, Rect) -> Unit,
+    onProgramOptions: (UpNextItem, Rect) -> Unit,
     modifier: Modifier,
 ) {
     val app = hero.value
@@ -727,7 +705,6 @@ private fun StageTitle(
         app = app,
         shelfArt = shelfArt.value?.takeIf { it.packageName == app?.packageName },
         visible = visible,
-        onRowFocus = onRowFocus,
         firstRowTile = firstRowTile,
         onProgramOptions = onProgramOptions,
         modifier = modifier,
