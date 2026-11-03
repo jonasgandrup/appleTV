@@ -158,9 +158,9 @@ private fun ControlTile(
                 if (caption != null) LumenText(caption, LumenType.Caption, color = look.content.copy(alpha = 0.6f), maxLines = 1)
             }
         } else {
-            Row(Modifier.align(Alignment.CenterStart).padding(horizontal = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+            Row(Modifier.align(Alignment.CenterStart).padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
                 Image(painterResource(icon), null, Modifier.size(24.dp), colorFilter = ColorFilter.tint(look.content))
-                LumenText(title, LumenType.Body, Modifier.padding(start = 10.dp), color = look.content, maxLines = 1)
+                LumenText(title, LumenType.Body, Modifier.padding(start = 8.dp), color = look.content, maxLines = 1)
             }
         }
     }

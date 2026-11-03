@@ -44,7 +44,7 @@ Popular launchers such as Projectivy use this same approach on Chromecast with G
 
 **To test on the device:**
 
-1. Turn on the service (see README), then press Home from inside an app. Atrium should appear,
+1. Turn on the service (see [INSTALL.md](INSTALL.md)), then press Home from inside an app. Atrium should appear,
    possibly after a split second of Google TV.
 2. Reboot (`adb reboot`). After the boot animation, Atrium should take over.
 3. Settings → Open Google TV Home → Google TV stays. Open any app, press Home → Lumen.
@@ -76,7 +76,7 @@ adb shell pm disable-user --user 0 com.google.android.tungsten.setupwraith   # f
 With no other home available, Android uses Atrium for Home and boot. Known side effects: Google
 TV recommendations, profiles, the "For you" tab, and some settings shortcuts that open inside
 the Google TV launcher stop working. System updates may re-enable the packages. Undo it with
-the `pm enable` commands in the README's restore section.
+the `pm enable` commands in the restore section of [INSTALL.md](INSTALL.md).
 
 Never run `pm uninstall` on system packages. It's much harder to undo than `disable-user`.
 
