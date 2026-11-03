@@ -29,6 +29,8 @@ object LumenColors {
     val GlassTint = Color(0x12FFFFFF)
     /** Glass floating over artwork, like the dock. Dims what's behind it, as tvOS's does. */
     val GlassTintDim = Color(0x2E000000)
+    /** Clear glass over artwork, like the dock, which should barely dim what's behind it. */
+    val GlassTintClear = Color(0x14000000)
     /** Glass with focus on it. */
     val GlassFocused = Color(0xF2FFFFFF)
     /** For glass with nothing frosted behind it, where text has to stay readable by itself. */

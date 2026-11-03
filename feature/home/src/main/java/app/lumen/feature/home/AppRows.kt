@@ -81,7 +81,7 @@ internal class TileActions(
 private val ShelfGlassOutset = 20.dp
 
 /**
- * The dock: tvOS's top row on a sheet of dim glass, remembering its focused tile when you come back
+ * The dock: tvOS's top row on a sheet of clear glass, remembering its focused tile when you come back
  * to it. The tiles stay aligned with the grid below, and slide aside when an app is moved among
  * them. No names here, as on tvOS: the art says which app it is, and the stage above belongs to
  * what's in it.
@@ -101,7 +101,7 @@ internal fun AppRow(
             Modifier
                 .matchParentSize()
                 .padding(horizontal = LumenDimens.SafeHorizontal - ShelfGlassOutset)
-                .liquidGlass(LumenDimens.GlassCorner, tint = LumenColors.GlassTintDim),
+                .liquidGlass(LumenDimens.GlassCorner, tint = LumenColors.GlassTintClear, clear = true),
         )
         LazyRow(
             modifier = Modifier.fillMaxWidth().focusRestorer(),

@@ -293,7 +293,7 @@ private fun bakeArtwork(bitmap: Bitmap, hasText: Boolean): Bitmap {
     val scrim = Paint().apply { isDither = true }
     scrim.shader = LinearGradient(
         0f, 0f, 0f, height,
-        if (hasText) intArrayOf(0x33000000, 0x00000000, 0x1A000000, 0xB3000000.toInt()) else intArrayOf(0x33000000, 0x00000000, 0x0D000000, 0x59000000),
+        if (hasText) intArrayOf(0x33000000, 0x00000000, 0x1A000000, 0xB3000000.toInt()) else intArrayOf(0x33000000, 0x00000000, 0x0D000000, 0x40000000),
         floatArrayOf(0f, 0.25f, 0.55f, 1f),
         Shader.TileMode.CLAMP,
     )

@@ -6,10 +6,13 @@ import android.content.ContextWrapper
 import android.graphics.Bitmap
 import android.graphics.BitmapShader
 import android.graphics.Matrix
+import android.graphics.RuntimeShader
 import android.graphics.Shader
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.view.PixelCopy
+import androidx.annotation.RequiresApi
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
@@ -48,11 +51,12 @@ import kotlin.coroutines.resume
 import kotlin.math.min
 
 /*
- * Liquid glass, tuned for the Chromecast's GPU: a live blur or refraction shader is too heavy while
- * tiles animate, so nothing here blurs per frame. Glass gets its frost from images blurred once on
- * the CPU. Its liquid look comes from what's drawn over that, each a simple shape: at the edge, where
- * real glass bends light, bands of the frost pulled from further out, as a lens would; a double rim
- * giving the sheet thickness; a soft highlight; and a bounce of light along the bottom edge.
+ * Liquid glass, tuned for the Chromecast's GPU: a live blur is too heavy while tiles animate, so
+ * nothing here blurs per frame. Glass gets its frost from images blurred once on the CPU. Its liquid
+ * look comes from what's drawn over that, each a simple shape: at the edge, where real glass bends
+ * light, bands of the frost pulled from further out, as a lens would; a double rim giving the sheet
+ * thickness; a soft highlight; and a bounce of light along the bottom edge. Clear glass bends the
+ * frost in a shader instead, so its edge is one smooth curve, where the system has shaders.
  */
 
 /**
@@ -79,12 +83,18 @@ val LocalLiveFrost = staticCompositionLocalOf<LiveFrost?> { null }
 
 /**
  * A floating sheet of glass behind this element's content. Draws outside its bounds for its shadow.
+ * With [clear], it's tvOS's clear glass for controls that carry pictures: what's behind stays bright
+ * and the edge nearly disappears, with no shadow. Text on it wouldn't stay readable.
  */
-fun Modifier.liquidGlass(corner: Dp, tint: Color = LumenColors.GlassTint): Modifier = composed {
+fun Modifier.liquidGlass(corner: Dp, tint: Color = LumenColors.GlassTint, clear: Boolean = false): Modifier = composed {
     val fixedBackdrop = LocalGlassBackdrop.current
     val liveFrost = LocalLiveFrost.current
     var origin by remember { mutableStateOf(Offset.Zero) }
     var window by remember { mutableStateOf(IntSize.Zero) }
+    // One for the frost showing and one for the frost it fades in over.
+    val lenses = remember(clear) {
+        if (clear && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) List(2) { GlassLens() } else null
+    }
 
     this
         .onGloballyPositioned {
@@ -132,17 +142,28 @@ fun Modifier.liquidGlass(corner: Dp, tint: Color = LumenColors.GlassTint): Modif
                 }
             }
             onDrawWithContent {
-                drawGlassShadow(radius)
+                if (!clear) drawGlassShadow(radius)
                 val live = liveFrost?.image
                 val backdrop = live ?: fixedBackdrop
                 if (backdrop != null && window != IntSize.Zero) {
                     val fade = if (live != null) liveFrost.fade else 1f
                     // Solid underneath, so the glass doesn't turn see-through halfway.
-                    if (fade < 1f) liveFrost?.previous?.let { drawRoundRect(brushFor(it), cornerRadius = corners) }
-                    drawRoundRect(brushFor(backdrop), cornerRadius = corners, alpha = fade)
+                    if (lenses != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                        val bend = min(LENS_BEND.toPx(), radius)
+                        val refraction = LENS_REFRACTION.toPx()
+                        if (fade < 1f) {
+                            liveFrost?.previous?.let {
+                                drawRoundRect(lenses[1].brush(it, window, origin, size, radius, bend, refraction), cornerRadius = corners)
+                            }
+                        }
+                        drawRoundRect(lenses[0].brush(backdrop, window, origin, size, radius, bend, refraction), cornerRadius = corners, alpha = fade)
+                    } else {
+                        if (fade < 1f) liveFrost?.previous?.let { drawRoundRect(brushFor(it), cornerRadius = corners) }
+                        drawRoundRect(brushFor(backdrop), cornerRadius = corners, alpha = fade)
+                    }
                     // The window's scrims don't reach the frost, so it would glow without this.
-                    drawRoundRect(Color.Black.copy(alpha = GLASS_DIM), cornerRadius = corners)
-                    if (hasEdge) {
+                    drawRoundRect(Color.Black.copy(alpha = if (clear) CLEAR_GLASS_DIM else GLASS_DIM), cornerRadius = corners)
+                    if (hasEdge && !clear) {
                         // Where glass curves away, it bends in light from around it. Narrower bands bend it further.
                         drawEdgeBand(brushFor(backdrop, LENS_OUTER), outer, radius, EDGE_OUTER_ALPHA * fade)
                         drawEdgeBand(brushFor(backdrop, LENS_INNER), inner, radius, EDGE_INNER_ALPHA * fade)
@@ -150,7 +171,7 @@ fun Modifier.liquidGlass(corner: Dp, tint: Color = LumenColors.GlassTint): Modif
                 }
                 drawRoundRect(fill, cornerRadius = corners)
                 drawRoundRect(highlight, cornerRadius = corners)
-                if (hasEdge) {
+                if (hasEdge && !clear) {
                     // A second, fainter rim inside the first gives the sheet some thickness.
                     drawRoundRect(
                         Color.White.copy(alpha = 0.07f),
@@ -160,12 +181,81 @@ fun Modifier.liquidGlass(corner: Dp, tint: Color = LumenColors.GlassTint): Modif
                         style = Stroke(1.dp.toPx()),
                     )
                 }
-                drawGlassRim(corner)
+                drawGlassRim(corner, strength = if (clear) CLEAR_RIM_STRENGTH else 1f)
                 drawContent()
             }
         }
 }
 
+/**
+ * Frost, bent the way a thick sheet of glass bends light: near the edge each pixel looks further
+ * outward, in one smooth curve, and catches a little light. Past [LENS_BEND] from the edge the frost
+ * is drawn as it is. Mutated between draws, which Android allows: a recorded draw keeps its own copy.
+ */
+@RequiresApi(Build.VERSION_CODES.TIRAMISU)
+private class GlassLens {
+    private val shader = RuntimeShader(GLASS_LENS_SHADER)
+    private val brush = ShaderBrush(shader)
+    private var image: ImageBitmap? = null
+    private var window = IntSize.Zero
+    private var origin: Offset? = null
+    private var size = Size.Unspecified
+    private var radius = -1f
+
+    fun brush(image: ImageBitmap, window: IntSize, origin: Offset, size: Size, radius: Float, bend: Float, refraction: Float): ShaderBrush {
+        if (image !== this.image || window != this.window) {
+            this.image = image
+            this.window = window
+            val frost = BitmapShader(image.asAndroidBitmap(), Shader.TileMode.CLAMP, Shader.TileMode.CLAMP)
+            // Inside a shader, the paint's own filtering doesn't reach it.
+            frost.filterMode = BitmapShader.FILTER_MODE_LINEAR
+            frost.setLocalMatrix(Matrix().apply { setScale(window.width.toFloat() / image.width, window.height.toFloat() / image.height) })
+            shader.setInputShader("frost", frost)
+        }
+        if (origin != this.origin) {
+            this.origin = origin
+            shader.setFloatUniform("origin", origin.x, origin.y)
+        }
+        if (size != this.size || radius != this.radius) {
+            this.size = size
+            this.radius = radius
+            shader.setFloatUniform("size", size.width, size.height)
+            shader.setFloatUniform("radius", radius)
+            shader.setFloatUniform("bend", bend)
+            shader.setFloatUniform("refraction", refraction)
+        }
+        return brush
+    }
+}
+
+/** Bends at most as wide as the corners, so the two straight edges' bends can't meet in a visible seam. */
+private const val GLASS_LENS_SHADER = """
+uniform shader frost;
+uniform float2 origin;
+uniform float2 size;
+uniform float radius;
+uniform float bend;
+uniform float refraction;
+
+half4 main(float2 coord) {
+    float2 p = coord - size * 0.5;
+    float2 q = abs(p) - size * 0.5 + radius;
+    float2 corner = max(q, 0.0);
+    float depth = radius - length(corner) - min(max(q.x, q.y), 0.0);
+    float edge = 1.0 - clamp(depth / bend, 0.0, 1.0);
+    float2 outward = corner.x + corner.y > 0.0 ? normalize(corner) * sign(p) : float2(0.0);
+    float curve = edge * edge * edge;
+    float3 color = frost.eval(coord + origin + outward * curve * refraction).rgb;
+    float light = dot(outward, float2(-0.5, -0.85));
+    color += edge * edge * (0.05 + 0.09 * max(light, 0.0));
+    // Dithered, so a slow fade in a dark picture can't show as steps.
+    color += (fract(52.9829189 * fract(dot(coord, float2(0.06711056, 0.00583715)))) - 0.5) / 255.0;
+    return half4(half3(color), 1.0);
+}
+"""
+
+private val LENS_BEND = 18.dp
+private val LENS_REFRACTION = 26.dp
 private val EDGE_OUTER = 9.dp
 private val EDGE_INNER = 4.dp
 private const val LENS_OUTER = 0.9f
@@ -173,6 +263,8 @@ private const val LENS_INNER = 0.78f
 private const val EDGE_OUTER_ALPHA = 0.32f
 private const val EDGE_INNER_ALPHA = 0.5f
 private const val GLASS_DIM = 0.2f
+private const val CLEAR_GLASS_DIM = 0.08f
+private const val CLEAR_RIM_STRENGTH = 0.4f
 private const val HIGHLIGHT_ALPHA = 0.14f
 
 /** A band of width [width] along the inside of the glass's edge. */
@@ -266,7 +358,7 @@ private tailrec fun Context.findActivity(): Activity? = when (this) {
 private const val FROST_WIDTH = 192
 private const val FROST_HEIGHT = 108
 private const val FROST_RADIUS = 7
-private const val CLEAR_FROST_RADIUS = 7
+private const val CLEAR_FROST_RADIUS = 4
 
 /** This image, shrunk and blurred into frost. Blocking. */
 fun Bitmap.frosted(): Bitmap =
