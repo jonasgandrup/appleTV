@@ -42,7 +42,7 @@ class ShelfArt(
      * seen small, like YouTube's, which only look blurry and cluttered stretched across the screen.
      */
     val isRecommendations: Boolean,
-    /** What the app features in its preview channels, best first, for the full-screen Top Shelf. Empty when it has none. */
+    /** What fills the full-screen Top Shelf, best first: the app's preview channels, or else its Watch Next. Empty when it has neither. */
     val featured: List<ShelfProgram>,
     /** Differs whenever anything shown here does, so a reread that changed nothing leaves the screen alone. */
     internal val signature: String,
@@ -98,6 +98,9 @@ class TopShelfRepository(context: Context) {
 
     private val context = context.applicationContext
     private val cache = ConcurrentHashMap<String, Entry>()
+    /** Only read and written by [continueWatching], which runs one at a time. */
+    private var continuing: List<UpNextItem> = emptyList()
+    private var continuingSignature: String? = null
 
     private class Entry(val art: ShelfArt?, val staleAt: Long, val complete: Boolean)
 
@@ -149,6 +152,37 @@ class TopShelfRepository(context: Context) {
         cache.replaceAll { _, entry -> Entry(entry.art, 0L, entry.complete) }
     }
 
+    /**
+     * What the user is in the middle of across all of [packageNames], most recently watched first.
+     * Programs an app merely suggests or has on a watchlist stay out. Anything that didn't change
+     * since last time isn't fetched again.
+     */
+    suspend fun continueWatching(packageNames: List<String>): List<UpNextItem> {
+        if (!hasPermission) return emptyList()
+        return withContext(Dispatchers.IO) {
+            val programs = packageNames.flatMap { packageName ->
+                val watchNext = runCatching { programs(WATCH_NEXT_URI, packageName, LAST_ENGAGEMENT, MAX_UP_NEXT) }.getOrDefault(emptyList())
+                if (watchNext.isNotEmpty()) Log.d(TAG, "$packageName Watch Next types: ${watchNext.map { it.watchNextType }}")
+                watchNext.filter { it.isContinuing }.map { packageName to it }
+            }.sortedByDescending { (_, program) -> program.rank }.take(MAX_CONTINUING)
+            val signature = programs.joinToString("|") { (packageName, it) -> "$packageName${it.title}${it.detail}${it.progress}${it.intentUri}" }
+            if (signature == continuingSignature) return@withContext continuing
+            coroutineScope {
+                val items = programs.map { (packageName, program) ->
+                    async {
+                        val bytes = runCatching { open(program.art.first()).use(InputStream::readBytes) }.getOrNull() ?: return@async null
+                        upNextItem(packageName, program, bytes)
+                    }
+                }.awaitAll().filterNotNull()
+                // A download that failed gets another try next time, with the fuller row staying up until then.
+                if (items.size < continuing.size && items.size < programs.size) return@coroutineScope continuing
+                if (items.size == programs.size) continuingSignature = signature
+                continuing = items
+                items
+            }
+        }
+    }
+
     /** Whether a read that came up short lost something, rather than the app having dropped it. */
     private fun ShelfArt?.isWorseThan(previous: ShelfArt): Boolean =
         this == null || upNext.size < previous.upNext.size || (previous.hasBackdrop && !hasBackdrop)
@@ -193,15 +227,9 @@ class TopShelfRepository(context: Context) {
         val rowPrograms = if (isRecommendations) preview else watchNext
         val items = rowPrograms.map { program ->
             val art = download(program.art.first())
-            async(Dispatchers.Default) {
-                val title = program.title?.takeIf(String::isNotBlank) ?: return@async null
-                val bytes = art.await() ?: return@async null
-                val thumbnail = decodeArt(bytes, THUMB_WIDTH, THUMB_HEIGHT, upscale = true, minWidth = MIN_THUMB_WIDTH) ?: return@async null
-                program.progress?.let { drawProgress(thumbnail, it) }
-                UpNextItem(packageName, title, thumbnail, program.detail, program.intentUri)
-            }
+            async(Dispatchers.Default) { art.await()?.let { upNextItem(packageName, program, it) } }
         }.awaitAll().filterNotNull()
-        val featured = if (isRecommendations) emptyList() else preview.mapNotNull { program ->
+        val featured = if (isRecommendations) emptyList() else preview.ifEmpty { watchNext }.mapNotNull { program ->
             program.title?.takeIf(String::isNotBlank)?.let { title ->
                 ShelfProgram(packageName, title, program.episode, program.description, program.art, program.intentUri)
             }
@@ -221,6 +249,14 @@ class TopShelfRepository(context: Context) {
         Loaded(art, complete)
     }
 
+    /** The tile for [program], or null if it has no title or its art is too small to use. */
+    private fun upNextItem(packageName: String, program: Program, art: ByteArray): UpNextItem? {
+        val title = program.title?.takeIf(String::isNotBlank) ?: return null
+        val thumbnail = decodeArt(art, THUMB_WIDTH, THUMB_HEIGHT, upscale = true, minWidth = MIN_THUMB_WIDTH) ?: return null
+        program.progress?.let { drawProgress(thumbnail, it) }
+        return UpNextItem(packageName, title, thumbnail, program.detail, program.intentUri)
+    }
+
     private class Program(
         val title: String?,
         /** Its landscape art, poster first, then thumbnail. Never empty. */
@@ -232,16 +268,27 @@ class TopShelfRepository(context: Context) {
         val detail: String?,
         val episode: String?,
         val description: String?,
-    )
+        /** Why it's in Watch Next; null for a preview program, or when the app didn't say. */
+        val watchNextType: Int?,
+    ) {
+        /** Started, or the next episode of something that was. A program with no stated type counts only if it's been started. */
+        val isContinuing: Boolean
+            get() = when (watchNextType) {
+                WatchNextPrograms.WATCH_NEXT_TYPE_CONTINUE, WatchNextPrograms.WATCH_NEXT_TYPE_NEXT -> true
+                null -> progress != null
+                else -> false
+            }
+    }
 
     /** Up to [limit] programs with landscape art, best first: most recently watched, or highest weighted. */
     private fun programs(base: Uri, packageName: String, rankColumn: String, limit: Int): List<Program> {
         // The provider rejects selections from apps without full EPG access; it filters by this parameter instead.
         val uri = base.buildUpon().appendQueryParameter("package", packageName).build()
+        val isWatchNext = base == WATCH_NEXT_URI
         val projection = arrayOf(
             TITLE, POSTER_URI, POSTER_ASPECT, THUMBNAIL_URI, THUMBNAIL_ASPECT, INTENT_URI, POSITION, DURATION,
             SEASON, EPISODE, DESCRIPTION, rankColumn,
-        )
+        ) + if (isWatchNext) arrayOf(WATCH_NEXT_TYPE) else emptyArray()
         val cursor = context.contentResolver.query(uri, projection, null, null, null) ?: return emptyList()
         return cursor.use { c ->
             buildList {
@@ -254,7 +301,8 @@ class TopShelfRepository(context: Context) {
                     val episode = episodeLabel(c.stringOrNull(SEASON), c.stringOrNull(EPISODE))
                     val detail = listOfNotNull(episode, timeLeft(position, duration)).joinToString(" · ").ifEmpty { null }
                     val description = c.stringOrNull(DESCRIPTION)?.takeIf(String::isNotBlank)
-                    add(Program(c.stringOrNull(TITLE), art, c.longOrZero(rankColumn), c.stringOrNull(INTENT_URI), progress, detail, episode, description))
+                    val type = if (isWatchNext) c.getColumnIndex(WATCH_NEXT_TYPE).takeIf { it >= 0 && !c.isNull(it) }?.let(c::getInt) else null
+                    add(Program(c.stringOrNull(TITLE), art, c.longOrZero(rankColumn), c.stringOrNull(INTENT_URI), progress, detail, episode, description, type))
                 }
             }.sortedByDescending { it.rank }.take(limit)
         }
@@ -357,6 +405,7 @@ class TopShelfRepository(context: Context) {
         private const val EPISODE = PreviewPrograms.COLUMN_EPISODE_DISPLAY_NUMBER
         private const val DESCRIPTION = PreviewPrograms.COLUMN_SHORT_DESCRIPTION
         private const val LAST_ENGAGEMENT = WatchNextPrograms.COLUMN_LAST_ENGAGEMENT_TIME_UTC_MILLIS
+        private const val WATCH_NEXT_TYPE = WatchNextPrograms.COLUMN_WATCH_NEXT_TYPE
         private const val WEIGHT = PreviewPrograms.COLUMN_WEIGHT
         /** 16:9, 3:2 and 4:3. Square and portrait art would be cropped to a sliver. */
         private val LANDSCAPE_ASPECTS = setOf(
@@ -371,6 +420,7 @@ class TopShelfRepository(context: Context) {
         private const val MAX_CANDIDATES = 3
         private const val MAX_UP_NEXT = 8
         private const val MAX_FEATURED = 6
+        private const val MAX_CONTINUING = 12
         private const val PROGRESS_INSET = 0.05f
         private const val PROGRESS_HEIGHT = 0.024f
         /** A sliver of fill even at the very start, so the bar reads as progress rather than a line. */

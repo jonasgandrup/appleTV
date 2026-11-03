@@ -6,12 +6,13 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -19,6 +20,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.focusRestorer
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Rect
@@ -42,33 +45,43 @@ import app.lumen.core.designsystem.LumenType
  * wide 16:9 tiles under a small heading, running off the right edge when there are more. It holds
  * the app's Watch Next, or its recommendations if that's all it has. Up from the dock steps into it;
  * Back or Down steps out again. Tiles show how far along each program is, and their title, episode
- * and time left only while focused.
+ * and time left only while focused, after the name [appName] gives their app when the row mixes apps.
+ * [hint] appears beside the heading while focus is in the row.
  */
 @OptIn(ExperimentalComposeUiApi::class)
 @Composable
-internal fun UpNextRow(items: List<UpNextItem>, heading: String, modifier: Modifier = Modifier) {
-    Column(modifier) {
-        LumenText(
-            heading,
-            LumenType.Section,
-            Modifier.padding(start = LumenDimens.SafeHorizontal),
-            color = LumenColors.TextSecondary,
-        )
+internal fun UpNextRow(
+    items: List<UpNextItem>,
+    heading: String,
+    modifier: Modifier = Modifier,
+    hint: String? = null,
+    appName: (String) -> String? = { null },
+) {
+    var rowFocused by remember { mutableStateOf(false) }
+    val firstTile = remember { FocusRequester() }
+    Column(modifier.onFocusChanged { rowFocused = it.hasFocus }) {
+        Row(Modifier.padding(start = LumenDimens.SafeHorizontal), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+            LumenText(heading, LumenType.Section, color = LumenColors.TextSecondary)
+            if (hint != null && rowFocused) LumenText(hint, LumenType.Section, color = LumenColors.TextTertiary)
+        }
         LazyRow(
             modifier = Modifier
                 .fillMaxWidth()
-                .focusRestorer(),
+                // Entering for the first time starts at the first tile, wherever focus came from.
+                .focusRestorer { firstTile },
             contentPadding = PaddingValues(start = LumenDimens.SafeHorizontal, end = LumenDimens.SafeHorizontal, top = 10.dp),
             horizontalArrangement = Arrangement.spacedBy(LumenDimens.TileSpacing),
         ) {
-            items(items) { item -> UpNextTile(item) }
+            itemsIndexed(items) { index, item ->
+                UpNextTile(item, appName(item.packageName), if (index == 0) Modifier.focusRequester(firstTile) else Modifier)
+            }
         }
     }
 }
 
 /** A program tile with its title under it while focused, and under that where the user is in it. */
 @Composable
-private fun UpNextTile(item: UpNextItem) {
+private fun UpNextTile(item: UpNextItem, appName: String?, focusModifier: Modifier) {
     val context = LocalContext.current
     val view = LocalView.current
     val art = remember(item.thumbnail) { item.thumbnail.asImageBitmap() }
@@ -92,14 +105,16 @@ private fun UpNextTile(item: UpNextItem) {
             showLabel = false,
             focusScale = PROGRAM_FOCUS_SCALE,
             idleFocusScale = PROGRAM_IDLE_FOCUS_SCALE,
-            tileModifier = Modifier
+            tileModifier = focusModifier
                 .onFocusChanged { focused = it.isFocused }
                 .onGloballyPositioned { bounds[0] = it.boundsInRoot() },
         )
         // Room for both lines is always kept, so the row doesn't jump as focus arrives. Clears the focused tile's growth.
         Column(Modifier.padding(top = 12.dp).height(ProgramLabelHeight).graphicsLayer { alpha = labelAlpha }) {
             LumenText(item.title, LumenType.Body, maxLines = 1)
-            item.detail?.let { LumenText(it, LumenType.Caption, color = LumenColors.TextSecondary, maxLines = 1) }
+            listOfNotNull(appName, item.detail).joinToString(" · ").ifEmpty { null }?.let {
+                LumenText(it, LumenType.Caption, color = LumenColors.TextSecondary, maxLines = 1)
+            }
         }
     }
 }

@@ -14,12 +14,14 @@ import app.lumen.core.apps.AppRepository
 import app.lumen.core.apps.ShelfArt
 import app.lumen.core.apps.ShelfProgram
 import app.lumen.core.apps.TopShelfRepository
+import app.lumen.core.apps.UpNextItem
 import app.lumen.core.designsystem.LumenDimens
 import app.lumen.core.settings.AppFolder
 import app.lumen.core.settings.LauncherSettings
 import app.lumen.core.settings.ScreensaverType
 import app.lumen.core.settings.SettingsRepository
 import app.lumen.core.settings.WallpaperLibrary
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
@@ -107,6 +109,14 @@ class HomeViewModel(
     fun shelfArtIncomplete(app: AppInfo): Boolean = topShelf.isIncomplete(app.packageName)
     fun expireShelfArt() = topShelf.expireAll()
     suspend fun programBackdrop(program: ShelfProgram): Bitmap? = topShelf.backdrop(program)
+
+    private val continuing = MutableStateFlow<List<UpNextItem>>(emptyList())
+    /** What the user is in the middle of across all their apps, most recently watched first. */
+    val continueWatching: StateFlow<List<UpNextItem>> = continuing
+
+    suspend fun refreshContinueWatching(packageNames: List<String>) {
+        continuing.value = topShelf.continueWatching(packageNames)
+    }
 
     /** Which tile had focus when the home screen was last left, so coming back lands there. */
     var lastFocusKey: String? = null

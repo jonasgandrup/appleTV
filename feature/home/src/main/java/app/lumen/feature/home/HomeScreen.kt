@@ -48,6 +48,8 @@ import androidx.compose.ui.layout.layout
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.lumen.core.apps.AppInfo
 import app.lumen.core.apps.ShelfArt
@@ -71,11 +73,16 @@ import app.lumen.core.system.SystemActions
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 
 /** The dock, plus a sliver of the grid below it, as on tvOS. */
 private val ShelfAreaHeight = LumenDimens.TileHeight + LumenDimens.DockInset * 2 + 36.dp
 private const val SHELF_KEY = "shelf"
+private const val CONTINUE_KEY = "continue"
 private const val GRID_KEY = "grid"
+private const val CONTINUE_RECHECK_MS = 20_000L
 private const val SETTINGS_FOCUS_KEY = "settings"
 private const val SETTLE_TIMEOUT_MS = 1_000L
 
@@ -136,6 +143,26 @@ fun HomeScreen(
         }
     }
     val shelfArt = rememberShelfArt(hero, state.settings.ambientBackdrop, viewModel)
+    val continueWatching by viewModel.continueWatching.collectAsStateWithLifecycle()
+    var continueHasFocus by remember { mutableStateOf(false) }
+    // Coming back from an app is when this changes, and apps can take a moment to publish what was just watched.
+    val tvAppPackages = remember(state.allApps) { state.allApps.filter { it.isTvApp }.map { it.packageName } }
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    LaunchedEffect(tvAppPackages) {
+        lifecycle.currentStateFlow
+            .map { it.isAtLeast(Lifecycle.State.RESUMED) }
+            .distinctUntilChanged()
+            .collectLatest { resumed ->
+                if (!resumed || tvAppPackages.isEmpty()) return@collectLatest
+                viewModel.refreshContinueWatching(tvAppPackages)
+                delay(CONTINUE_RECHECK_MS)
+                viewModel.refreshContinueWatching(tvAppPackages)
+            }
+    }
+    // If the last program goes while focus is on it, focus needs somewhere to land.
+    LaunchedEffect(continueWatching.isEmpty()) {
+        if (continueWatching.isEmpty() && continueHasFocus) runCatching { firstFocus.requestFocus() }
+    }
     // While an app is being moved, the editor's arrangement shows instead of the saved one.
     val dock = if (editor.active) editor.dock.filterIsInstance<HomeItem.App>().map { it.app } else state.favorites
     val gridItems = if (editor.active) editor.grid else state.grid
@@ -405,6 +432,21 @@ fun HomeScreen(
                                         }
                                         // Fades as it scrolls under the top edge, rather than leaving a strip of empty glass there.
                                         .graphicsLayer { alpha = listState.visibleFraction(SHELF_KEY).let { ((it - 0.45f) / 0.35f).coerceIn(0f, 1f) } },
+                                )
+                            }
+                        }
+                        if (continueWatching.isNotEmpty() && !editor.active) {
+                            item(key = CONTINUE_KEY) {
+                                UpNextRow(
+                                    items = continueWatching,
+                                    heading = "Continue Watching",
+                                    appName = { pkg -> state.allApps.find { it.packageName == pkg }?.label },
+                                    modifier = Modifier
+                                        .padding(top = 4.dp, bottom = 4.dp)
+                                        .onFocusChanged {
+                                            continueHasFocus = it.hasFocus
+                                            if (it.hasFocus) browsingBelow = true
+                                        },
                                 )
                             }
                         }

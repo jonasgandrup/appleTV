@@ -121,6 +121,7 @@ internal fun Hero(app: AppInfo?, shelfArt: ShelfArt?, visible: Boolean, onRowFoc
                 UpNextRow(
                     items = target.upNext,
                     heading = if (target.isRecommendations) "Recommended" else "Up Next",
+                    hint = "Press Up for full screen".takeIf { target.featured.isNotEmpty() },
                     modifier = Modifier.offset(y = LumenDimens.SafeVertical - 6.dp).onFocusChanged { onRowFocus(it.hasFocus) },
                 )
             }
