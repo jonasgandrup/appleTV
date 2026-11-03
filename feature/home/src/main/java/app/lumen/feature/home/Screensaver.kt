@@ -1,6 +1,7 @@
 package app.lumen.feature.home
 
 import android.view.TextureView
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.Animatable
@@ -8,6 +9,7 @@ import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -50,6 +52,7 @@ import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.Lifecycle
@@ -64,6 +67,7 @@ import app.lumen.core.designsystem.LumenColors
 import app.lumen.core.designsystem.LumenDimens
 import app.lumen.core.designsystem.LumenText
 import app.lumen.core.designsystem.LumenType
+import app.lumen.core.designsystem.frosted
 import app.lumen.core.designsystem.liquidGlass
 import app.lumen.core.designsystem.rememberClockText
 import app.lumen.core.settings.ScreensaverType
@@ -75,6 +79,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlin.math.abs
 
 private const val AERIAL_MS = 75_000L
 private const val SLIDE_MS = 40_000
@@ -84,6 +89,13 @@ private const val FIRST_FRAME_TIMEOUT_MS = 4_000L
 private const val CROSSFADE_MS = 2_500
 private const val DETAILS_MS = 6_000L
 private const val PHOTO_WIDTH = 1920
+/** A track change can report "not playing" for a moment, which shouldn't bring the scenery back. */
+private const val MUSIC_LINGER_MS = 5_000L
+/** One pixel at a time, this rarely, so the drift is too slow to see and costs almost nothing to draw. */
+private const val DRIFT_STEP_MS = 2_000L
+private const val DRIFT_X_PX = 30
+private const val DRIFT_Y_PX = 21
+private const val MUSIC_FADE_MS = 1_000
 
 /**
  * After this long, Lumen stops holding the screen on and lets the TV's own sleep take over.
@@ -108,7 +120,8 @@ private class SaverControls {
  * Wraps the home screen and fades in a screen saver after [timeoutMinutes] without input while
  * Lumen is in front. The remote works as on tvOS while it runs: Up picks a category, Left and Right
  * change scene, Down names what's showing, and anything else stops it. The key that stops it is
- * swallowed, so waking never opens an app.
+ * swallowed, so waking never opens an app. While [nowPlaying] is playing, the album art takes over
+ * from the scenery, and any key stops it.
  *
  * While the timer runs Lumen holds the screen on, so Google TV's own ambient mode can't start
  * first; it lets go [MAX_SCREENSAVER_MS] into the screen saver, unless [nowPlaying] is playing, since
@@ -136,6 +149,19 @@ internal fun ScreensaverHost(
     var swallowKeyUp by remember { mutableStateOf(false) }
     var focusIdle by remember { mutableStateOf(false) }
     val controls = remember { SaverControls() }
+    val isPlaying = nowPlaying?.isPlaying == true
+    var musicShown by remember { mutableStateOf(false) }
+    LaunchedEffect(isPlaying) {
+        if (isPlaying) {
+            musicShown = true
+        } else {
+            delay(MUSIC_LINGER_MS)
+            musicShown = false
+        }
+    }
+    // Stays on the last song while it fades away, even once its app has closed its session.
+    var song by remember { mutableStateOf<NowPlaying?>(null) }
+    if (nowPlaying != null) song = nowPlaying
     // Your Photos is on offer only with photos to show.
     val photos by produceState<List<String>>(emptyList(), showing) { value = loadPhotos() }
     val categories = remember(photos) {
@@ -182,6 +208,7 @@ internal fun ScreensaverHost(
 
     /** The screen saver's answer to a key pressed while it runs. False means it should stop. */
     fun handleKey(key: Key): Boolean {
+        if (musicShown) return false
         val picking = controls.picking
         if (picking != null) {
             when (key) {
@@ -228,9 +255,10 @@ internal fun ScreensaverHost(
                 }
             },
     ) {
-        CompositionLocalProvider(LocalFocusIdle provides focusIdle) { content() }
+        // Nothing behind the screen saver needs to keep moving.
+        CompositionLocalProvider(LocalFocusIdle provides (focusIdle && !showing)) { content() }
         AnimatedVisibility(showing, enter = fadeIn(tween(1_500)), exit = fadeOut(tween(300))) {
-            Screensaver(type.takeIf { it in categories } ?: ScreensaverType.Aerials, showClock, photos, categories, controls, nowPlaying)
+            Screensaver(type.takeIf { it in categories } ?: ScreensaverType.Aerials, showClock, photos, categories, controls, song.takeIf { musicShown })
         }
     }
 }
@@ -253,7 +281,7 @@ private fun Screensaver(
     photos: List<String>,
     categories: List<ScreensaverType>,
     controls: SaverControls,
-    nowPlaying: NowPlaying?,
+    music: NowPlaying?,
 ) {
     val index = controls.slide
     val aerial = Aerial.entries[index.mod(Aerial.entries.size)].takeIf { type == ScreensaverType.Aerials }
@@ -271,8 +299,18 @@ private fun Screensaver(
     }
 
     Box(Modifier.fillMaxSize().background(LumenColors.Background)) {
-        if (aerial != null) AerialVideo(aerial) else PhotoSlides(photos, index)
-        AnimatedVisibility(showDetails, enter = fadeIn(tween(500)), exit = fadeOut(tween(800))) {
+        // Stays on the last song while it fades away.
+        var lastMusic by remember { mutableStateOf(music) }
+        if (music != null) lastMusic = music
+        Crossfade(targetState = music != null, animationSpec = tween(MUSIC_FADE_MS), label = "musicScene") { showMusic ->
+            val shown = lastMusic
+            when {
+                showMusic && shown != null -> MusicScene(shown)
+                aerial != null -> AerialVideo(aerial)
+                else -> PhotoSlides(photos, index)
+            }
+        }
+        AnimatedVisibility(showDetails && music == null, enter = fadeIn(tween(500)), exit = fadeOut(tween(800))) {
             Details(aerial?.title ?: "Your Photos", aerial?.subtitle)
         }
         // Changes sides with each scene, so it never stays in one place on the panel.
@@ -285,20 +323,7 @@ private fun Screensaver(
         ) {
             Crossfade(targetState = clockLeft, animationSpec = tween(CROSSFADE_MS), label = "clockSide") { left ->
                 Box(Modifier.fillMaxSize().padding(horizontal = LumenDimens.SafeHorizontal, vertical = LumenDimens.SafeVertical)) {
-                    TimeOfDay(showDetails, Modifier.align(if (left) Alignment.BottomStart else Alignment.BottomEnd), alignEnd = !left)
-                }
-            }
-        }
-        // On the side the clock isn't, and it changes sides too. Only while something's actually
-        // playing, as a paused session can sit there for hours.
-        val song = nowPlaying?.takeIf { it.isPlaying }
-        AnimatedVisibility(song != null, enter = fadeIn(tween(500)), exit = fadeOut(tween(800)), modifier = Modifier.fillMaxSize()) {
-            // Keeps showing the last song while it fades out, once there's no longer one to show.
-            var shown by remember { mutableStateOf(song) }
-            if (song != null) shown = song
-            Crossfade(targetState = clockLeft, animationSpec = tween(CROSSFADE_MS), label = "songSide") { left ->
-                Box(Modifier.fillMaxSize().padding(horizontal = LumenDimens.SafeHorizontal, vertical = LumenDimens.SafeVertical)) {
-                    shown?.let { SongBadge(it, Modifier.align(if (left) Alignment.BottomEnd else Alignment.BottomStart)) }
+                    TimeOfDay(Modifier.align(if (left) Alignment.BottomStart else Alignment.BottomEnd), alignEnd = !left)
                 }
             }
         }
@@ -406,40 +431,91 @@ private fun Details(title: String, subtitle: String?) {
     }
 }
 
-/** The time, with a soft shadow so it reads over a bright sky, and the date too when [withDate]. */
+/** The time and date, with a soft shadow so they read over a bright sky. */
 @Composable
-private fun TimeOfDay(withDate: Boolean, modifier: Modifier, alignEnd: Boolean) {
+private fun TimeOfDay(modifier: Modifier, alignEnd: Boolean) {
     val (time, date) = rememberClockText()
     val shadow = Shadow(Color.Black.copy(alpha = 0.55f), blurRadius = 14f)
     Column(modifier, horizontalAlignment = if (alignEnd) Alignment.End else Alignment.Start) {
         LumenText(time, LumenType.Title.copy(shadow = shadow))
-        if (withDate) LumenText(date, LumenType.Section.copy(shadow = shadow), color = LumenColors.TextSecondary)
+        LumenText(date, LumenType.Section.copy(shadow = shadow), color = LumenColors.TextSecondary)
     }
 }
 
-/** What's playing, on a small sheet of glass, with its artwork when the app shares some. */
+/**
+ * What's playing, filling the screen as tvOS's Now Playing does: the album cover large, with the
+ * song and artist beside it, over a soft blur of the cover. Everything creeps slowly around so it
+ * doesn't stay in one place on the panel.
+ */
 @Composable
-private fun SongBadge(playing: NowPlaying, modifier: Modifier) {
-    Row(
-        modifier
-            .widthIn(max = SongBadgeMaxWidth)
-            .liquidGlass(16.dp, tint = LumenColors.GlassTintDim)
-            .padding(8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
-    ) {
-        val art = remember(playing.art) { playing.art?.asImageBitmap() }
-        if (art != null) {
-            Image(art, null, Modifier.size(44.dp).clip(RoundedCornerShape(8.dp)), contentScale = ContentScale.Crop, filterQuality = FilterQuality.High)
+private fun MusicScene(playing: NowPlaying) {
+    val blur by produceState<ImageBitmap?>(null, playing.art) {
+        val art = playing.art
+        value = art?.let { withContext(Dispatchers.Default) { runCatching { it.frosted().asImageBitmap() }.getOrNull() } }
+    }
+    var step by remember { mutableIntStateOf(0) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            delay(DRIFT_STEP_MS)
+            step++
         }
-        Column(Modifier.padding(end = 6.dp)) {
-            LumenText(playing.title, LumenType.Body, maxLines = 1)
-            playing.artist?.let { LumenText(it, LumenType.Caption, color = LumenColors.TextSecondary, maxLines = 1) }
+    }
+    Box(Modifier.fillMaxSize().background(LumenColors.Background)) {
+        Crossfade(targetState = blur, animationSpec = tween(MUSIC_FADE_MS), label = "musicBackdrop") { image ->
+            if (image != null) {
+                Box(Modifier.fillMaxSize()) {
+                    Image(image, null, Modifier.fillMaxSize(), contentScale = ContentScale.FillBounds)
+                    Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = MUSIC_BACKDROP_DIM)))
+                }
+            }
+        }
+        AnimatedContent(
+            targetState = playing,
+            contentKey = { it.title to it.artist },
+            transitionSpec = { fadeIn(tween(MUSIC_FADE_MS)) togetherWith fadeOut(tween(MUSIC_FADE_MS / 2)) using null },
+            contentAlignment = Alignment.Center,
+            modifier = Modifier
+                .align(Alignment.Center)
+                .graphicsLayer {
+                    translationX = drift(step, DRIFT_X_PX).toFloat()
+                    translationY = drift(step, DRIFT_Y_PX).toFloat()
+                },
+            label = "musicSong",
+        ) { song ->
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(36.dp)) {
+                AlbumCover(song)
+                Column(Modifier.widthIn(max = MusicTextMaxWidth), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    LumenText(song.title, LumenType.Title, maxLines = 3)
+                    song.artist?.let { LumenText(it, LumenType.Headline, color = LumenColors.TextSecondary, maxLines = 2) }
+                }
+            }
         }
     }
 }
 
-private val SongBadgeMaxWidth = 340.dp
+/** The cover, smaller when its image is too small to stay sharp, or a plain note when there's none. */
+@Composable
+private fun AlbumCover(playing: NowPlaying) {
+    val shape = RoundedCornerShape(16.dp)
+    val art = remember(playing.art) { playing.art?.asImageBitmap() }
+    if (art != null) {
+        val size = if (art.width >= SHARP_COVER_PX) CoverSize else SmallCoverSize
+        Image(art, null, Modifier.size(size).clip(shape), contentScale = ContentScale.Crop, filterQuality = FilterQuality.High)
+    } else {
+        Box(Modifier.size(SmallCoverSize).background(LumenColors.Surface, shape), contentAlignment = Alignment.Center) {
+            Image(painterResource(R.drawable.ic_status_music), null, Modifier.size(72.dp))
+        }
+    }
+}
+
+/** A slow back-and-forth of whole pixels between -[amplitude] and [amplitude]. */
+private fun drift(step: Int, amplitude: Int): Int = abs((step + amplitude).mod(amplitude * 4) - amplitude * 2) - amplitude
+
+private const val MUSIC_BACKDROP_DIM = 0.4f
+private const val SHARP_COVER_PX = 400
+private val CoverSize = 300.dp
+private val SmallCoverSize = 200.dp
+private val MusicTextMaxWidth = 440.dp
 
 /** Up's row of categories along the top of the screen. It isn't focusable: the host's key handling drives it. */
 @Composable
