@@ -73,6 +73,7 @@ import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
 import app.lumen.core.designsystem.LocalFocusIdle
+import app.lumen.core.designsystem.LocalGlassBackdrop
 import app.lumen.core.designsystem.LumenColors
 import app.lumen.core.designsystem.LumenDimens
 import app.lumen.core.designsystem.LumenText
@@ -87,6 +88,7 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 
@@ -103,6 +105,10 @@ private const val MUSIC_LINGER_MS = 5_000L
 /** How long a cover opened with a click stays up, so nothing large stays put on the panel if it's left there. */
 private const val COVER_MS = 60_000L
 private const val MUSIC_FADE_MS = 1_000
+/** Long enough for the scene's first frame to be up on its view. */
+private const val SCENE_FROST_DELAY_MS = 300L
+private const val SCENE_FRAME_WIDTH = 320
+private const val SCENE_FRAME_HEIGHT = 180
 
 /**
  * After this long, Lumen stops holding the screen on and lets the TV's own sleep take over.
@@ -327,6 +333,8 @@ private fun Screensaver(
         // Stays on the last song while it fades away.
         var lastMusic by remember { mutableStateOf(music) }
         if (music != null) lastMusic = music
+        // The glass here frosts the scene, which is out of the home screen's frost's reach.
+        var sceneFrost by remember { mutableStateOf<ImageBitmap?>(null) }
         LaunchedEffect(controls.showCover, music == null) {
             if (music != null && controls.showCover) delay(COVER_MS)
             controls.showCover = false
@@ -335,8 +343,8 @@ private fun Screensaver(
             val shown = lastMusic
             when {
                 showCover && shown != null -> MusicScene(shown)
-                aerial != null -> AerialVideo(aerial)
-                else -> PhotoSlides(photos, index)
+                aerial != null -> AerialVideo(aerial) { sceneFrost = it }
+                else -> PhotoSlides(photos, index) { sceneFrost = it }
             }
         }
         AnimatedVisibility(showDetails && !controls.showCover, enter = fadeIn(tween(500)), exit = fadeOut(tween(800))) {
@@ -356,26 +364,28 @@ private fun Screensaver(
                 }
             }
         }
-        // On the side the clock isn't, and it changes sides too.
-        AnimatedVisibility(
-            music != null && !controls.showCover,
-            enter = fadeIn(tween(500)),
-            exit = fadeOut(tween(800)),
-            modifier = Modifier.fillMaxSize(),
-        ) {
-            Crossfade(targetState = clockLeft, animationSpec = tween(CROSSFADE_MS), label = "songSide") { left ->
-                Box(Modifier.fillMaxSize().padding(horizontal = LumenDimens.SafeHorizontal, vertical = LumenDimens.SafeVertical)) {
-                    lastMusic?.let { SongCard(it, Modifier.align(if (left) Alignment.BottomEnd else Alignment.BottomStart)) }
+        CompositionLocalProvider(LocalGlassBackdrop provides sceneFrost) {
+            // On the side the clock isn't, and it changes sides too.
+            AnimatedVisibility(
+                music != null && !controls.showCover,
+                enter = fadeIn(tween(500)),
+                exit = fadeOut(tween(800)),
+                modifier = Modifier.fillMaxSize(),
+            ) {
+                Crossfade(targetState = clockLeft, animationSpec = tween(CROSSFADE_MS), label = "songSide") { left ->
+                    Box(Modifier.fillMaxSize().padding(horizontal = LumenDimens.SafeHorizontal, vertical = LumenDimens.SafeVertical)) {
+                        lastMusic?.let { SongCard(it, Modifier.align(if (left) Alignment.BottomEnd else Alignment.BottomStart)) }
+                    }
                 }
             }
-        }
-        AnimatedVisibility(
-            controls.picking != null,
-            enter = fadeIn(tween(250)),
-            exit = fadeOut(tween(200)),
-            modifier = Modifier.align(Alignment.TopCenter),
-        ) {
-            CategoryPicker(categories, controls.picking ?: 0)
+            AnimatedVisibility(
+                controls.picking != null,
+                enter = fadeIn(tween(250)),
+                exit = fadeOut(tween(200)),
+                modifier = Modifier.align(Alignment.TopCenter),
+            ) {
+                CategoryPicker(categories, controls.picking ?: 0)
+            }
         }
     }
 }
@@ -386,8 +396,9 @@ private fun Screensaver(
  */
 @OptIn(UnstableApi::class)
 @Composable
-private fun AerialVideo(aerial: Aerial) {
+private fun AerialVideo(aerial: Aerial, onFrost: (ImageBitmap) -> Unit) {
     val context = LocalContext.current
+    var texture by remember { mutableStateOf<TextureView?>(null) }
     val player = remember {
         ExoPlayer.Builder(context).build().apply {
             repeatMode = Player.REPEAT_MODE_ONE
@@ -410,19 +421,29 @@ private fun AerialVideo(aerial: Aerial) {
         player.prepare()
         withTimeoutOrNull(FIRST_FRAME_TIMEOUT_MS) { showing.await() }
         player.removeListener(listener)
+        launch {
+            delay(SCENE_FROST_DELAY_MS)
+            val frame = texture?.getBitmap(SCENE_FRAME_WIDTH, SCENE_FRAME_HEIGHT) ?: return@launch
+            onFrost(withContext(Dispatchers.Default) { frame.frosted().asImageBitmap() })
+        }
         veil.animateTo(0f, tween(VEIL_IN_MS))
     }
-    AndroidView(factory = { TextureView(it).also(player::setVideoTextureView) }, modifier = Modifier.fillMaxSize())
+    AndroidView(
+        factory = { TextureView(it).also(player::setVideoTextureView).also { view -> texture = view } },
+        modifier = Modifier.fillMaxSize(),
+    )
     Box(Modifier.fillMaxSize().drawBehind { drawRect(Color.Black, alpha = veil.value) })
 }
 
 /** The user's photos, each zooming and panning slowly. The next is ready before it's shown, so nothing flashes black. */
 @Composable
-private fun PhotoSlides(photos: List<String>, index: Int) {
+private fun PhotoSlides(photos: List<String>, index: Int, onFrost: (ImageBitmap) -> Unit) {
     var shown by remember { mutableStateOf<Pair<Int, ImageBitmap?>?>(null) }
     LaunchedEffect(photos, index) {
         if (photos.isEmpty()) return@LaunchedEffect
-        shown = index to withContext(Dispatchers.IO) { WallpaperLibrary.decode(photos[index.mod(photos.size)], PHOTO_WIDTH)?.asImageBitmap() }
+        val photo = withContext(Dispatchers.IO) { WallpaperLibrary.decode(photos[index.mod(photos.size)], PHOTO_WIDTH) }
+        photo?.let { onFrost(withContext(Dispatchers.Default) { it.frosted().asImageBitmap() }) }
+        shown = index to photo?.asImageBitmap()
     }
     Crossfade(targetState = shown, animationSpec = tween(CROSSFADE_MS), label = "slide") { slide ->
         val image = slide?.second
