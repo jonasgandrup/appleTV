@@ -52,8 +52,7 @@ import kotlin.math.min
  * tiles animate, so nothing here blurs per frame. Glass gets its frost from images blurred once on
  * the CPU. Its liquid look comes from what's drawn over that, each a simple shape: at the edge, where
  * real glass bends light, bands of the frost pulled from further out, as a lens would; a double rim
- * giving the sheet thickness; a highlight that can follow what has focus; and a bounce of light along
- * the bottom edge.
+ * giving the sheet thickness; a soft highlight; and a bounce of light along the bottom edge.
  */
 
 /**
@@ -80,10 +79,8 @@ val LocalLiveFrost = staticCompositionLocalOf<LiveFrost?> { null }
 
 /**
  * A floating sheet of glass behind this element's content. Draws outside its bounds for its shadow.
- * [lightX] places its highlight, from 0 at the left to 1 at the right; read while drawing, so it can
- * animate without recomposing, and the highlight glides over the glass.
  */
-fun Modifier.liquidGlass(corner: Dp, tint: Color = LumenColors.GlassTint, lightX: (() -> Float)? = null): Modifier = composed {
+fun Modifier.liquidGlass(corner: Dp, tint: Color = LumenColors.GlassTint): Modifier = composed {
     val fixedBackdrop = LocalGlassBackdrop.current
     val liveFrost = LocalLiveFrost.current
     var origin by remember { mutableStateOf(Offset.Zero) }
@@ -96,12 +93,11 @@ fun Modifier.liquidGlass(corner: Dp, tint: Color = LumenColors.GlassTint, lightX
         }
         .drawWithCache {
             val radius = min(corner.toPx(), size.minDimension / 2)
-            fun highlight(x: Float) = Brush.radialGradient(
+            val highlight = Brush.radialGradient(
                 listOf(Color.White.copy(alpha = HIGHLIGHT_ALPHA), Color.Transparent),
-                center = Offset(size.width * x, 0f),
+                center = Offset(size.width * 0.15f, 0f),
                 radius = min(size.width * 0.5f, size.height * 3f),
             )
-            val restingHighlight = highlight(0.15f)
             val outer = EDGE_OUTER.toPx()
             val inner = EDGE_INNER.toPx()
             val thickness = 1.5.dp.toPx()
@@ -153,7 +149,7 @@ fun Modifier.liquidGlass(corner: Dp, tint: Color = LumenColors.GlassTint, lightX
                     }
                 }
                 drawRoundRect(fill, cornerRadius = corners)
-                drawRoundRect(lightX?.let { highlight(it()) } ?: restingHighlight, cornerRadius = corners)
+                drawRoundRect(highlight, cornerRadius = corners)
                 if (hasEdge) {
                     // A second, fainter rim inside the first gives the sheet some thickness.
                     drawRoundRect(

@@ -15,7 +15,6 @@ import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.VectorConverter
 import androidx.compose.animation.core.VisibilityThreshold
-import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -29,7 +28,6 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -40,7 +38,6 @@ import androidx.compose.ui.composed
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.focusRestorer
-import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
@@ -98,20 +95,13 @@ internal fun AppRow(
     lifted: AppInfo? = null,
     firstTileFocus: FocusRequester? = null,
 ) {
-    // The glass's highlight glides along to the app with focus.
-    var focusedIndex by remember { mutableIntStateOf(0) }
-    val light by animateFloatAsState(
-        targetValue = (focusedIndex + 0.5f) / apps.size.coerceAtLeast(1),
-        animationSpec = spring(dampingRatio = 0.75f, stiffness = Spring.StiffnessLow),
-        label = "dockLight",
-    )
     Box(modifier.fillMaxWidth()) {
         // Separate from the row, which runs the full width of the screen so it can't cut off a focused tile's shadow.
         Spacer(
             Modifier
                 .matchParentSize()
                 .padding(horizontal = LumenDimens.SafeHorizontal - ShelfGlassOutset)
-                .liquidGlass(LumenDimens.GlassCorner, tint = LumenColors.GlassTintDim, lightX = { light }),
+                .liquidGlass(LumenDimens.GlassCorner, tint = LumenColors.GlassTintDim),
         )
         LazyRow(
             modifier = Modifier.fillMaxWidth().focusRestorer(),
@@ -125,9 +115,7 @@ internal fun AppRow(
                     lifted = app.packageName == lifted?.packageName,
                     showLabel = false,
                     modifier = Modifier.animateItem(fadeInSpec = null, fadeOutSpec = null, placementSpec = TileSlide),
-                    tileModifier = Modifier
-                        .onFocusChanged { if (it.isFocused) focusedIndex = index }
-                        .then(if (index == 0 && firstTileFocus != null) Modifier.focusRequester(firstTileFocus) else Modifier),
+                    tileModifier = if (index == 0 && firstTileFocus != null) Modifier.focusRequester(firstTileFocus) else Modifier,
                 )
             }
         }

@@ -1,11 +1,16 @@
 package app.lumen.core.system
 
 import android.accessibilityservice.AccessibilityService
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import android.view.KeyEvent
 import android.view.accessibility.AccessibilityEvent
+import androidx.core.content.ContextCompat
 import app.lumen.core.settings.SettingsRepository
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -43,8 +48,14 @@ class HomeOverrideService : AccessibilityService() {
         runCatching { startActivity(HomeOverride.lumenHomeIntent(this).putExtra(HomeOverride.EXTRA_CONTROL_CENTER, true)) }
     }
 
+    /** A Sleep Timer has nothing left to do once the TV sleeps by itself. */
+    private val screenOff = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) = SleepTimer.cancel()
+    }
+
     override fun onServiceConnected() {
         instance = this
+        ContextCompat.registerReceiver(this, screenOff, IntentFilter(Intent.ACTION_SCREEN_OFF), ContextCompat.RECEIVER_NOT_EXPORTED)
         scope.launch {
             SettingsRepository(this@HomeOverrideService).settings
                 .map { it.homeOverride }
@@ -93,6 +104,7 @@ class HomeOverrideService : AccessibilityService() {
 
     override fun onDestroy() {
         if (instance === this) instance = null
+        runCatching { unregisterReceiver(screenOff) }
         handler.removeCallbacks(onHomeHeld)
         scope.cancel()
         super.onDestroy()

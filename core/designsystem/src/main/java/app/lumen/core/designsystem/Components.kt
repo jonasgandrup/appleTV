@@ -383,7 +383,14 @@ private val AvatarColor = Color(0xFF636366)
  * picture once there's anything personal to show. Press Up to reach it; it opens Control Center.
  */
 @Composable
-fun Clock(onClick: () -> Unit, modifier: Modifier = Modifier, profileName: String = "", profilePicture: ImageBitmap? = null) {
+fun Clock(
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    profileName: String = "",
+    profilePicture: ImageBitmap? = null,
+    /** Status icons before the time, as on tvOS, given the color to draw them in. */
+    status: @Composable (Color) -> Unit = {},
+) {
     val showAvatar = profilePicture != null || profileName.isNotBlank()
     var focused by remember { mutableStateOf(false) }
     val scale by animateFloatAsState(
@@ -405,6 +412,7 @@ fun Clock(onClick: () -> Unit, modifier: Modifier = Modifier, profileName: Strin
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
+        status(content)
         LumenText(rememberClockText().first, LumenType.Body, color = content)
         if (showAvatar) Avatar(profileName, picture = profilePicture)
     }

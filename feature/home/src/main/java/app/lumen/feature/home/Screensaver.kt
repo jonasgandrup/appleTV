@@ -16,6 +16,8 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -31,9 +33,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.graphics.asImageBitmap
@@ -46,8 +50,8 @@ import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
-import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.currentStateAsState
@@ -64,6 +68,7 @@ import app.lumen.core.designsystem.liquidGlass
 import app.lumen.core.designsystem.rememberClockText
 import app.lumen.core.settings.ScreensaverType
 import app.lumen.core.settings.WallpaperLibrary
+import app.lumen.core.system.NowPlaying
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -106,13 +111,17 @@ private class SaverControls {
  * swallowed, so waking never opens an app.
  *
  * While the timer runs Lumen holds the screen on, so Google TV's own ambient mode can't start
- * first; it lets go [MAX_SCREENSAVER_MS] into the screen saver.
+ * first; it lets go [MAX_SCREENSAVER_MS] into the screen saver, unless [nowPlaying] is playing, since
+ * the TV sleeping would cut the music off. With [holdOff], the screen saver doesn't start by itself,
+ * though Back can still start one.
  */
 @Composable
 internal fun ScreensaverHost(
     timeoutMinutes: Int,
     type: ScreensaverType,
     showClock: Boolean,
+    holdOff: Boolean,
+    nowPlaying: NowPlaying?,
     onTypeChange: (ScreensaverType) -> Unit,
     loadPhotos: suspend () -> List<String>,
     wake: Flow<Unit>,
@@ -155,17 +164,17 @@ internal fun ScreensaverHost(
         controls.showDetails = true
     }
 
-    LaunchedEffect(resumed, timeoutMinutes, inputCount) {
+    LaunchedEffect(resumed, timeoutMinutes, inputCount, holdOff) {
         expired = false
         if (!resumed || timeoutMinutes <= 0) return@LaunchedEffect
         delay(timeoutMinutes * 60_000L)
-        showing = true
+        if (!holdOff) showing = true
         delay(MAX_SCREENSAVER_MS)
         expired = true
     }
 
     val view = LocalView.current
-    val keepScreenOn = resumed && timeoutMinutes > 0 && !expired
+    val keepScreenOn = resumed && timeoutMinutes > 0 && (!expired || nowPlaying?.isPlaying == true)
     DisposableEffect(view, keepScreenOn) {
         view.keepScreenOn = keepScreenOn
         onDispose { view.keepScreenOn = false }
@@ -221,7 +230,7 @@ internal fun ScreensaverHost(
     ) {
         CompositionLocalProvider(LocalFocusIdle provides focusIdle) { content() }
         AnimatedVisibility(showing, enter = fadeIn(tween(1_500)), exit = fadeOut(tween(300))) {
-            Screensaver(type.takeIf { it in categories } ?: ScreensaverType.Aerials, showClock, photos, categories, controls)
+            Screensaver(type.takeIf { it in categories } ?: ScreensaverType.Aerials, showClock, photos, categories, controls, nowPlaying)
         }
     }
 }
@@ -238,7 +247,14 @@ private enum class Aerial(val asset: String, val title: String, val subtitle: St
 
 /** Moving nature scenes, as tvOS's Aerials are, or the user's photos drifting slowly. */
 @Composable
-private fun Screensaver(type: ScreensaverType, showClock: Boolean, photos: List<String>, categories: List<ScreensaverType>, controls: SaverControls) {
+private fun Screensaver(
+    type: ScreensaverType,
+    showClock: Boolean,
+    photos: List<String>,
+    categories: List<ScreensaverType>,
+    controls: SaverControls,
+    nowPlaying: NowPlaying?,
+) {
     val index = controls.slide
     val aerial = Aerial.entries[index.mod(Aerial.entries.size)].takeIf { type == ScreensaverType.Aerials }
     LaunchedEffect(type, index) {
@@ -270,6 +286,19 @@ private fun Screensaver(type: ScreensaverType, showClock: Boolean, photos: List<
             Crossfade(targetState = clockLeft, animationSpec = tween(CROSSFADE_MS), label = "clockSide") { left ->
                 Box(Modifier.fillMaxSize().padding(horizontal = LumenDimens.SafeHorizontal, vertical = LumenDimens.SafeVertical)) {
                     TimeOfDay(showDetails, Modifier.align(if (left) Alignment.BottomStart else Alignment.BottomEnd), alignEnd = !left)
+                }
+            }
+        }
+        // On the side the clock isn't, and it changes sides too. Only while something's actually
+        // playing, as a paused session can sit there for hours.
+        val song = nowPlaying?.takeIf { it.isPlaying }
+        AnimatedVisibility(song != null, enter = fadeIn(tween(500)), exit = fadeOut(tween(800)), modifier = Modifier.fillMaxSize()) {
+            // Keeps showing the last song while it fades out, once there's no longer one to show.
+            var shown by remember { mutableStateOf(song) }
+            if (song != null) shown = song
+            Crossfade(targetState = clockLeft, animationSpec = tween(CROSSFADE_MS), label = "songSide") { left ->
+                Box(Modifier.fillMaxSize().padding(horizontal = LumenDimens.SafeHorizontal, vertical = LumenDimens.SafeVertical)) {
+                    shown?.let { SongBadge(it, Modifier.align(if (left) Alignment.BottomEnd else Alignment.BottomStart)) }
                 }
             }
         }
@@ -387,6 +416,30 @@ private fun TimeOfDay(withDate: Boolean, modifier: Modifier, alignEnd: Boolean) 
         if (withDate) LumenText(date, LumenType.Section.copy(shadow = shadow), color = LumenColors.TextSecondary)
     }
 }
+
+/** What's playing, on a small sheet of glass, with its artwork when the app shares some. */
+@Composable
+private fun SongBadge(playing: NowPlaying, modifier: Modifier) {
+    Row(
+        modifier
+            .widthIn(max = SongBadgeMaxWidth)
+            .liquidGlass(16.dp, tint = LumenColors.GlassTintDim)
+            .padding(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        val art = remember(playing.art) { playing.art?.asImageBitmap() }
+        if (art != null) {
+            Image(art, null, Modifier.size(44.dp).clip(RoundedCornerShape(8.dp)), contentScale = ContentScale.Crop, filterQuality = FilterQuality.High)
+        }
+        Column(Modifier.padding(end = 6.dp)) {
+            LumenText(playing.title, LumenType.Body, maxLines = 1)
+            playing.artist?.let { LumenText(it, LumenType.Caption, color = LumenColors.TextSecondary, maxLines = 1) }
+        }
+    }
+}
+
+private val SongBadgeMaxWidth = 340.dp
 
 /** Up's row of categories along the top of the screen. It isn't focusable: the host's key handling drives it. */
 @Composable

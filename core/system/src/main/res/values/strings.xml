@@ -2,4 +2,5 @@
 <resources>
     <string name="home_override_label">Atrium Home Button</string>
     <string name="home_override_description">Opens Atrium when you press Home on the remote. Atrium only checks which app is in the foreground; it never reads what is on screen.</string>
+    <string name="media_access_label">Atrium Now Playing</string>
 </resources>

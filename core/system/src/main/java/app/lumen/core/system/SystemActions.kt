@@ -34,6 +34,8 @@ object SystemActions {
 
     fun openSearch(context: Context) = start(context, Intent(SearchManager.INTENT_ACTION_GLOBAL_SEARCH))
 
+    fun openNotificationAccess(context: Context) = start(context, Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
+
     fun openAccessibilitySettings(context: Context) =
         start(context, Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
 

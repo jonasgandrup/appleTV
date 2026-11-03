@@ -8,7 +8,9 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.annotation.DrawableRes
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
@@ -40,6 +42,7 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
@@ -51,6 +54,7 @@ import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
@@ -75,6 +79,8 @@ import app.lumen.core.designsystem.rememberFrostedWallpaper
 import app.lumen.core.settings.AppFolder
 import app.lumen.core.settings.Wallpaper
 import app.lumen.core.system.HomeOverride
+import app.lumen.core.system.DeviceStatus
+import app.lumen.core.system.SleepTimer
 import app.lumen.core.system.SystemActions
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
@@ -165,6 +171,11 @@ fun HomeScreen(
             (focusedRecommendation.value?.takeIf { it in items } ?: items.firstOrNull())?.thumbnail
         }
     }
+    val deviceStatus = remember { DeviceStatus(context) }
+    val network by deviceStatus.network.collectAsStateWithLifecycle(null)
+    val headphones by deviceStatus.headphones.collectAsStateWithLifecycle(null)
+    val nowPlaying by deviceStatus.nowPlaying.collectAsStateWithLifecycle(null)
+    val sleepEndsAt by SleepTimer.endsAt.collectAsStateWithLifecycle()
     val continueWatching by viewModel.continueWatching.collectAsStateWithLifecycle()
     var continueHasFocus by remember { mutableStateOf(false) }
     // Coming back from an app is when this changes, and apps can take a moment to publish what was just watched.
@@ -353,6 +364,8 @@ fun HomeScreen(
         timeoutMinutes = state.settings.screensaverMinutes,
         type = state.settings.screensaverType,
         showClock = state.settings.screensaverClock,
+        holdOff = !state.settings.screensaverDuringMusic && nowPlaying?.isPlaying == true,
+        nowPlaying = nowPlaying,
         onTypeChange = { viewModel.setScreensaverType(it) },
         loadPhotos = viewModel::screensaverPhotos,
         wake = homePresses,
@@ -513,6 +526,7 @@ fun HomeScreen(
                         onIndex = { fullScreen = it },
                         playFocus = playFocus,
                         preload = viewModel::preloadProgram,
+                        paused = controlCenterOpen,
                     )
                 }
 
@@ -532,7 +546,17 @@ fun HomeScreen(
                             // Control Center shows the time in this same spot. Kept in place, so focus can come back to it.
                             .graphicsLayer { alpha = if (controlCenterOpen) 0f else 1f },
                     ) {
-                        Clock(onClick = { controlCenterOpen = true }, profileName = state.settings.profileName, profilePicture = profilePicture)
+                        Clock(
+                            onClick = { controlCenterOpen = true },
+                            profileName = state.settings.profileName,
+                            profilePicture = profilePicture,
+                            status = { color ->
+                                if (network?.hasInternet == false) StatusIcon("No internet", R.drawable.ic_status_no_internet, color)
+                                if (sleepEndsAt != null) StatusIcon("Sleep Timer", R.drawable.ic_cc_timer, color)
+                                if (nowPlaying?.isPlaying == true) StatusIcon("Now Playing", R.drawable.ic_status_music, color)
+                                if (headphones != null) StatusIcon("Headphones", R.drawable.ic_status_headphones, color)
+                            },
+                        )
                     }
                 }
 
@@ -554,6 +578,16 @@ fun HomeScreen(
                         profileName = state.settings.profileName,
                         profilePicture = profilePicture,
                         sleepReady = HomeOverride.isServiceEnabled(context),
+                        status = ControlCenterStatus(
+                            network = network,
+                            headphones = headphones,
+                            nowPlaying = nowPlaying,
+                            nowPlayingApp = state.allApps.find { it.packageName == nowPlaying?.packageName }?.label,
+                            sleepEndsAt = sleepEndsAt,
+                            clickSounds = state.settings.navigationSounds,
+                            device = deviceStatus,
+                        ),
+                        onClickSounds = viewModel::setClickSounds,
                         actions = ControlCenterActions(
                             // Sleep goes through the Home Button service; without it, this leads to where it's turned on.
                             onSleep = { if (!SystemActions.sleep()) SystemActions.openAccessibilitySettings(context) },
@@ -689,6 +723,12 @@ private fun StageBackdrop(
         below = below,
         frost = frost,
     )
+}
+
+/** One of tvOS's small status icons beside the clock. */
+@Composable
+private fun StatusIcon(description: String, @DrawableRes icon: Int, color: Color) {
+    Image(painterResource(icon), description, Modifier.size(16.dp), colorFilter = ColorFilter.tint(color))
 }
 
 /** A program held down in a row, for [ProgramOptionsDialog]. */

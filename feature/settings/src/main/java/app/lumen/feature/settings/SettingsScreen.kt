@@ -69,6 +69,7 @@ import app.lumen.core.settings.GradientPreset
 import app.lumen.core.settings.LauncherSettings
 import app.lumen.core.settings.ScreensaverType
 import app.lumen.core.settings.Wallpaper
+import app.lumen.core.system.DeviceStatus
 import app.lumen.core.system.HomeOverride
 import app.lumen.core.system.SystemActions
 
@@ -210,7 +211,11 @@ private fun MainPage(
     val context = LocalContext.current
     val initial = rememberInitialFocus()
     var serviceEnabled by remember { mutableStateOf(HomeOverride.isServiceEnabled(context)) }
-    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { serviceEnabled = HomeOverride.isServiceEnabled(context) }
+    var mediaAccess by remember { mutableStateOf(DeviceStatus.hasMediaAccess(context)) }
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
+        serviceEnabled = HomeOverride.isServiceEnabled(context)
+        mediaAccess = DeviceStatus.hasMediaAccess(context)
+    }
     val version = remember {
         runCatching { context.packageManager.getPackageInfo(context.packageName, 0).versionName }.getOrNull() ?: "?"
     }
@@ -331,6 +336,19 @@ private fun MainPage(
         }
         item {
             SettingsRow(
+                title = "Now Playing",
+                hint = if (mediaAccess) {
+                    "Shows what's playing in Control Center, with its controls, and an icon by the clock."
+                } else {
+                    "Show what's playing in Control Center. Turn on \"Atrium Now Playing\" in Notification Access; Android asks for that to share what's playing, and Atrium doesn't read your notifications."
+                },
+                value = if (mediaAccess) "On" else "Set Up",
+                chevron = true,
+                onClick = { SystemActions.openNotificationAccess(context) },
+            )
+        }
+        item {
+            SettingsRow(
                 title = "Home Button Service",
                 hint = if (serviceEnabled) {
                     "Enabled in Accessibility."
@@ -384,6 +402,13 @@ private fun ScreenSaverPage(settings: LauncherSettings, viewModel: SettingsViewM
             )
         }
         item { MenuRow("Show Clock", { viewModel.setScreensaverClock(!settings.screensaverClock) }, value = onOff(settings.screensaverClock)) }
+        item {
+            MenuRow(
+                "Show During Music and Podcasts",
+                { viewModel.setScreensaverDuringMusic(!settings.screensaverDuringMusic) },
+                value = onOff(settings.screensaverDuringMusic),
+            )
+        }
         item { SectionTitle("Start After") }
         items(ScreensaverDelays) { minutes ->
             MenuRow(

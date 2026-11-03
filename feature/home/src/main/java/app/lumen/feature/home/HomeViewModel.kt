@@ -126,6 +126,8 @@ class HomeViewModel(
         continuing.value = topShelf.continueWatching(packageNames)
     }
 
+    fun setClickSounds(enabled: Boolean) = viewModelScope.launch { settings.setNavigationSounds(enabled) }
+
     fun removeProgram(item: UpNextItem) {
         continuing.value = topShelf.removeProgram(item)
         viewModelScope.launch { settings.setRemovedPrograms(topShelf.removedPrograms) }

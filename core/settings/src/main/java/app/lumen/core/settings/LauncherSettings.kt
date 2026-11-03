@@ -41,6 +41,8 @@ data class LauncherSettings(
     val screensaverType: ScreensaverType = ScreensaverType.Aerials,
     /** Keep the time on the screen saver, rather than only when Down is pressed as on tvOS. */
     val screensaverClock: Boolean = true,
+    /** Let the screen saver start while music or a podcast plays, as tvOS's setting of the same name does. */
+    val screensaverDuringMusic: Boolean = true,
 )
 
 enum class GradientPreset(val displayName: String, val stops: List<Long>, val glow: Long, val accent: Long) {

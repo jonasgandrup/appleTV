@@ -71,15 +71,18 @@ internal fun FullScreenShelf(
     onIndex: (Int) -> Unit,
     playFocus: FocusRequester,
     preload: suspend (ShelfProgram) -> Unit,
+    /** Holds on the current program while something's open over it, whose frost is a capture of it. */
+    paused: Boolean,
 ) {
     val sounds = LocalUiSounds.current
     val context = LocalContext.current
     val program = programs[index]
-    LaunchedEffect(index, programs) {
+    LaunchedEffect(index, programs, paused) {
         launch {
             preload(programs[(index + 1) % programs.size])
             preload(programs[(index - 1).mod(programs.size)])
         }
+        if (paused) return@LaunchedEffect
         delay(ADVANCE_MS)
         onIndex((index + 1) % programs.size)
     }

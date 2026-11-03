@@ -59,6 +59,7 @@ class SettingsViewModel(
     fun setScreensaverMinutes(minutes: Int) = viewModelScope.launch { settingsRepository.setScreensaverMinutes(minutes) }
     fun setScreensaverType(type: ScreensaverType) = viewModelScope.launch { settingsRepository.setScreensaverType(type) }
     fun setScreensaverClock(enabled: Boolean) = viewModelScope.launch { settingsRepository.setScreensaverClock(enabled) }
+    fun setScreensaverDuringMusic(enabled: Boolean) = viewModelScope.launch { settingsRepository.setScreensaverDuringMusic(enabled) }
     fun setProfileName(name: String) = viewModelScope.launch { settingsRepository.setProfileName(name) }
     fun unhide(app: AppInfo) = viewModelScope.launch { settingsRepository.setHidden(app.packageName, false) }
 
