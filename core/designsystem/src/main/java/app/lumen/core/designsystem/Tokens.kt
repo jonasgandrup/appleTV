@@ -111,6 +111,11 @@ object LumenType {
         fontFamily = Family, fontWeight = FontWeight.Medium,
         fontSize = 15.5.sp, lineHeight = 19.sp,
     )
+    /** A row in a list, a little above tvOS's Body in size and regular in weight, as its lists are. */
+    val Row = TextStyle(
+        fontFamily = Family, fontWeight = FontWeight.Normal,
+        fontSize = 15.5.sp, lineHeight = 20.sp,
+    )
     /** tvOS Caption 1. */
     val Caption = TextStyle(
         fontFamily = Family, fontWeight = FontWeight.Medium,

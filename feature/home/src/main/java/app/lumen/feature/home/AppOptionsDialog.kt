@@ -50,7 +50,7 @@ internal class AppOptions(
 @Composable
 internal fun AppOptionsDialog(anchor: Rect, options: AppOptions, onDismiss: () -> Unit) {
     var choosingMove by remember { mutableStateOf(false) }
-    GlassDialog(onDismiss, Alignment.Center, Modifier.width(300.dp), anchor = anchor) { firstRow ->
+    GlassDialog(onDismiss, Alignment.Center, Modifier.width(272.dp), anchor = anchor) { firstRow ->
         fun run(action: () -> Unit): () -> Unit = {
             onDismiss()
             action()
@@ -84,7 +84,7 @@ internal fun ProgramOptionsDialog(
     onOpenApp: () -> Unit,
     onDismiss: () -> Unit,
 ) {
-    GlassDialog(onDismiss, Alignment.Center, Modifier.width(390.dp), anchor = anchor) { firstRow ->
+    GlassDialog(onDismiss, Alignment.Center, Modifier.width(350.dp), anchor = anchor) { firstRow ->
         fun run(action: () -> Unit): () -> Unit = {
             onDismiss()
             action()
@@ -97,7 +97,7 @@ internal fun ProgramOptionsDialog(
 /** The menu for a folder held down in the grid. */
 @Composable
 internal fun FolderOptionsDialog(anchor: Rect, onEditHomeScreen: () -> Unit, onRename: () -> Unit, onDismiss: () -> Unit) {
-    GlassDialog(onDismiss, Alignment.Center, Modifier.width(300.dp), anchor = anchor) { firstRow ->
+    GlassDialog(onDismiss, Alignment.Center, Modifier.width(272.dp), anchor = anchor) { firstRow ->
         fun run(action: () -> Unit): () -> Unit = {
             onDismiss()
             action()

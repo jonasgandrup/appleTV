@@ -5,7 +5,11 @@ import android.content.Context
 import android.content.ContextWrapper
 import android.graphics.Bitmap
 import android.graphics.BitmapShader
+import android.graphics.Canvas
+import android.graphics.ColorMatrix
+import android.graphics.ColorMatrixColorFilter
 import android.graphics.Matrix
+import android.graphics.Paint
 import android.graphics.RuntimeShader
 import android.graphics.Shader
 import android.os.Build
@@ -75,6 +79,8 @@ class LiveFrost {
     var previous by mutableStateOf<ImageBitmap?>(null)
     /** How far [image] has faded in over [previous], 0..1. */
     var fade by mutableFloatStateOf(1f)
+    /** A much softer, darker copy for filling the screen behind tiles. See [backgroundFrosted]. */
+    var background by mutableStateOf<ImageBitmap?>(null)
 }
 
 /** Takes over from [LocalGlassBackdrop] whenever it has an image. */
@@ -350,6 +356,33 @@ fun Bitmap.frosted(): Bitmap =
  */
 fun Bitmap.clearFrosted(): Bitmap =
     Bitmap.createScaledBitmap(this, FROST_WIDTH * 2, FROST_HEIGHT * 2, true).blurred(CLEAR_FROST_RADIUS)
+
+/**
+ * Frost for a whole screen behind tiles, as tvOS's home screen has below the top row: blurred until
+ * no shape can be made out, richer in color and darker, so tiles stand out on it. All of that is
+ * baked in rather than drawn over it, sparing the GPU a full-screen pass. Blocking.
+ */
+fun Bitmap.backgroundFrosted(): Bitmap {
+    val soft = Bitmap.createScaledBitmap(this, BACKGROUND_FROST_WIDTH, BACKGROUND_FROST_HEIGHT, true).blurred(BACKGROUND_FROST_RADIUS)
+    val out = Bitmap.createBitmap(BACKGROUND_FROST_WIDTH, BACKGROUND_FROST_HEIGHT, Bitmap.Config.ARGB_8888)
+    // Bright art is held down further, so white art doesn't leave a grey that white tiles get lost on.
+    val pixels = IntArray(BACKGROUND_FROST_WIDTH * BACKGROUND_FROST_HEIGHT).also { soft.getPixels(it, 0, BACKGROUND_FROST_WIDTH, 0, 0, BACKGROUND_FROST_WIDTH, BACKGROUND_FROST_HEIGHT) }
+    val luminance = pixels.sumOf { (0.2126 * (it shr 16 and 0xFF) + 0.7152 * (it shr 8 and 0xFF) + 0.0722 * (it and 0xFF)) / 255.0 } / pixels.size
+    val brightness = minOf(BACKGROUND_FROST_BRIGHTNESS, BACKGROUND_FROST_MAX_LUMINANCE / luminance.toFloat().coerceAtLeast(0.01f))
+    val matrix = ColorMatrix().apply {
+        setSaturation(BACKGROUND_FROST_SATURATION)
+        postConcat(ColorMatrix().apply { setScale(brightness, brightness, brightness, 1f) })
+    }
+    Canvas(out).drawBitmap(soft, 0f, 0f, Paint().apply { colorFilter = ColorMatrixColorFilter(matrix) })
+    return out
+}
+
+private const val BACKGROUND_FROST_WIDTH = 96
+private const val BACKGROUND_FROST_HEIGHT = 54
+private const val BACKGROUND_FROST_RADIUS = 6
+private const val BACKGROUND_FROST_SATURATION = 1.5f
+private const val BACKGROUND_FROST_BRIGHTNESS = 0.55f
+private const val BACKGROUND_FROST_MAX_LUMINANCE = 0.2f
 
 /**
  * A blurred copy of this bitmap: three box-blur passes, which approximate a Gaussian. Blocking, and

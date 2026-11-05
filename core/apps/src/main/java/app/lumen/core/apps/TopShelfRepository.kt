@@ -8,6 +8,7 @@ import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.RectF
+import android.media.tv.TvContract
 import android.media.tv.TvContract.PreviewPrograms
 import android.media.tv.TvContract.WatchNextPrograms
 import android.net.Uri
@@ -34,6 +35,8 @@ class ShelfArt(
      * none worth filling the screen with.
      */
     private val backdrop: ByteArray?,
+    /** [backdrop] holds up with nothing else on screen to look at, which most apps' art doesn't. */
+    val isSharp: Boolean,
     /**
      * A row of the app's preview channels, for an app with nothing else to show. These are thumbnails
      * made to be seen small, like YouTube's, which only look blurry and cluttered stretched across
@@ -73,9 +76,14 @@ class UpNextItem(
 class ShelfProgram(
     val packageName: String,
     val title: String,
-    /** Like "S3, E4", when the app said. */
+    /** What the app said about it, like "S3, E4 · 23 min left" or "Drama · 2023 · 2 hr 1 min". */
     val detail: String?,
+    /** A line or two to show on the stage. */
     val description: String?,
+    /** The fullest description the app gave, for More Info; null when it gave none. */
+    val fullDescription: String?,
+    /** The user has started it, so selecting it picks up where they left off. */
+    val resume: Boolean,
     internal val art: List<Uri>,
     /** Opens the program in its app; null when the app gave none. */
     val intentUri: String?,
@@ -214,6 +222,11 @@ class TopShelfRepository(context: Context) {
         fetchBackdrop(program)?.let { decodeArt(it, ART_WIDTH, ART_HEIGHT, upscale = false) }
     }
 
+    /** Whether [program]'s artwork holds up with nothing else on screen to look at. Fetches it if need be. */
+    suspend fun isSharp(program: ShelfProgram): Boolean = withContext(Dispatchers.IO) {
+        fetchBackdrop(program)?.let { landscapeWidth(it) }?.let { it >= SHARP_WIDTH } ?: false
+    }
+
     /** Fetches [program]'s artwork ahead of time, so its picture can arrive together with its text. */
     suspend fun preloadBackdrop(program: ShelfProgram) {
         withContext(Dispatchers.IO) { fetchBackdrop(program) }
@@ -270,7 +283,16 @@ class TopShelfRepository(context: Context) {
             .take(MAX_FEATURED)
             .mapNotNull { program ->
                 program.title?.takeIf(String::isNotBlank)?.let { title ->
-                    ShelfProgram(packageName, title, program.episode, program.description, program.art, program.intentUri)
+                    ShelfProgram(
+                        packageName,
+                        title,
+                        listOfNotNull(program.detail, program.facts).joinToString(" · ").ifEmpty { null },
+                        program.description ?: program.longDescription,
+                        program.longDescription ?: program.description,
+                        resume = program.progress != null,
+                        program.art,
+                        program.intentUri,
+                    )
                 }
             }
         val complete = downloads.values.awaitAll().none { it == null }
@@ -282,7 +304,7 @@ class TopShelfRepository(context: Context) {
         val art = if (stage == null && recommendations.isEmpty() && featured.isEmpty()) {
             null
         } else {
-            ShelfArt(packageName, stage?.second, recommendations, featured, signature)
+            ShelfArt(packageName, stage?.second, stage != null && backdropWidth >= SHARP_WIDTH, recommendations, featured, signature)
         }
         Loaded(art, complete)
     }
@@ -308,8 +330,10 @@ class TopShelfRepository(context: Context) {
         /** 0..1 through the program, or null if it hasn't been started. */
         val progress: Float?,
         val detail: String?,
-        val episode: String?,
         val description: String?,
+        val longDescription: String?,
+        /** Its genre, year and length, leaving out whatever the app didn't say. */
+        val facts: String?,
         /** Why it's in Watch Next; null for a preview program, or when the app didn't say. */
         val watchNextType: Int?,
         val place: String,
@@ -330,7 +354,7 @@ class TopShelfRepository(context: Context) {
         val isWatchNext = base == WATCH_NEXT_URI
         val projection = arrayOf(
             TITLE, POSTER_URI, POSTER_ASPECT, THUMBNAIL_URI, THUMBNAIL_ASPECT, INTENT_URI, POSITION, DURATION,
-            SEASON, EPISODE, DESCRIPTION, rankColumn,
+            SEASON, EPISODE, DESCRIPTION, LONG_DESCRIPTION, GENRE, RELEASE_DATE, rankColumn,
         ) + if (isWatchNext) arrayOf(WATCH_NEXT_TYPE) else emptyArray()
         val cursor = context.contentResolver.query(uri, projection, null, null, null) ?: return emptyList()
         return cursor.use { c ->
@@ -344,11 +368,15 @@ class TopShelfRepository(context: Context) {
                     val episode = episodeLabel(c.stringOrNull(SEASON), c.stringOrNull(EPISODE))
                     val detail = listOfNotNull(episode, timeLeft(position, duration)).joinToString(" · ").ifEmpty { null }
                     val description = c.stringOrNull(DESCRIPTION)?.takeIf(String::isNotBlank)
+                    val longDescription = c.stringOrNull(LONG_DESCRIPTION)?.takeIf(String::isNotBlank)
+                    // An episode's length would read as the whole show's, and a started program says what's left instead.
+                    val length = duration.takeIf { episode == null && progress == null }?.let(::lengthLabel)
+                    val facts = listOfNotNull(genreLabel(c.stringOrNull(GENRE)), yearOf(c.stringOrNull(RELEASE_DATE)), length).joinToString(" · ").ifEmpty { null }
                     val type = if (isWatchNext) c.getColumnIndex(WATCH_NEXT_TYPE).takeIf { it >= 0 && !c.isNull(it) }?.let(c::getInt) else null
                     val title = c.stringOrNull(TITLE)
                     val place = "$episode@$position"
                     if (isWatchNext && removedPrograms[programKey(packageName, title)] == place) continue
-                    add(Program(title, art, c.longOrZero(rankColumn), c.stringOrNull(INTENT_URI), progress, detail, episode, description, type, place))
+                    add(Program(title, art, c.longOrZero(rankColumn), c.stringOrNull(INTENT_URI), progress, detail, description, longDescription, facts, type, place))
                 }
             }.sortedByDescending { it.rank }.take(limit)
         }
@@ -363,14 +391,29 @@ class TopShelfRepository(context: Context) {
     /** "23 min left", "1 hr 5 min left"; null for a program not started or already finished. */
     private fun timeLeft(position: Long, duration: Long): String? {
         if (position <= 0 || duration <= position) return null
-        val minutes = ((duration - position + 59_999) / 60_000).toInt()
+        return "${lengthLabel(duration - position)} left"
+    }
+
+    /** "23 min", "2 hr", "1 hr 5 min"; null when there's no length to tell. */
+    private fun lengthLabel(ms: Long): String? {
+        if (ms <= 0) return null
+        val minutes = ((ms + 59_999) / 60_000).toInt()
         val hours = minutes / 60
         return when {
-            hours == 0 -> "$minutes min left"
-            minutes % 60 == 0 -> "$hours hr left"
-            else -> "$hours hr ${minutes % 60} min left"
+            hours == 0 -> "$minutes min"
+            minutes % 60 == 0 -> "$hours hr"
+            else -> "$hours hr ${minutes % 60} min"
         }
     }
+
+    /** The first genre that says something, in words. "Movies" is left out: it's a kind of program, not a genre. */
+    private fun genreLabel(encoded: String?): String? {
+        val genres = encoded?.takeIf(String::isNotBlank)?.let { runCatching { TvContract.Programs.Genres.decode(it) }.getOrNull() } ?: return null
+        return genres.firstNotNullOfOrNull(GENRE_LABELS::get)
+    }
+
+    /** The year of a release date, which apps write as "2023" or "2023-05-12". */
+    private fun yearOf(date: String?): String? = date?.trim()?.take(4)?.takeIf { it.length == 4 && it.all(Char::isDigit) }
 
     /** The poster and thumbnail, each if it's landscape. Portrait art can't fill a stage. */
     private fun landscapeArt(c: Cursor): List<Uri> {
@@ -454,6 +497,24 @@ class TopShelfRepository(context: Context) {
         private const val SEASON = PreviewPrograms.COLUMN_SEASON_DISPLAY_NUMBER
         private const val EPISODE = PreviewPrograms.COLUMN_EPISODE_DISPLAY_NUMBER
         private const val DESCRIPTION = PreviewPrograms.COLUMN_SHORT_DESCRIPTION
+        private const val LONG_DESCRIPTION = PreviewPrograms.COLUMN_LONG_DESCRIPTION
+        private const val GENRE = PreviewPrograms.COLUMN_CANONICAL_GENRE
+        private const val RELEASE_DATE = PreviewPrograms.COLUMN_RELEASE_DATE
+        private val GENRE_LABELS = mapOf(
+            TvContract.Programs.Genres.ANIMAL_WILDLIFE to "Nature",
+            TvContract.Programs.Genres.ARTS to "Arts",
+            TvContract.Programs.Genres.COMEDY to "Comedy",
+            TvContract.Programs.Genres.DRAMA to "Drama",
+            TvContract.Programs.Genres.EDUCATION to "Education",
+            TvContract.Programs.Genres.FAMILY_KIDS to "Kids & Family",
+            TvContract.Programs.Genres.GAMING to "Gaming",
+            TvContract.Programs.Genres.LIFE_STYLE to "Lifestyle",
+            TvContract.Programs.Genres.MUSIC to "Music",
+            TvContract.Programs.Genres.NEWS to "News",
+            TvContract.Programs.Genres.SPORTS to "Sports",
+            TvContract.Programs.Genres.TECH_SCIENCE to "Science & Tech",
+            TvContract.Programs.Genres.TRAVEL to "Travel",
+        )
         private const val LAST_ENGAGEMENT = WatchNextPrograms.COLUMN_LAST_ENGAGEMENT_TIME_UTC_MILLIS
         private const val WATCH_NEXT_TYPE = WatchNextPrograms.COLUMN_WATCH_NEXT_TYPE
         private const val WEIGHT = PreviewPrograms.COLUMN_WEIGHT

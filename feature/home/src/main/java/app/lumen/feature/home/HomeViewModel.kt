@@ -117,6 +117,7 @@ class HomeViewModel(
     fun expireShelfArt() = topShelf.expireAll()
     suspend fun programBackdrop(program: ShelfProgram): Bitmap? = topShelf.backdrop(program)
     suspend fun preloadProgram(program: ShelfProgram) = topShelf.preloadBackdrop(program)
+    suspend fun programIsSharp(program: ShelfProgram): Boolean = topShelf.isSharp(program)
 
     private val continuing = MutableStateFlow<List<UpNextItem>>(emptyList())
     /** What the user is in the middle of across all their apps, most recently watched first. */

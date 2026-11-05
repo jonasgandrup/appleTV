@@ -25,15 +25,18 @@ import androidx.compose.ui.input.pointer.pointerInput
  * counts as a click if this element also saw the key-down, so releasing select after a
  * long-press opened a dialog doesn't activate whatever the dialog focused first.
  * Taps work too, for testing in the emulator with a mouse. Plays [LocalUiSounds] when focus
- * arrives from a D-pad press and on select.
+ * arrives from a D-pad press and on select. [onPressedChange] hears select going down and coming
+ * up, so the element can answer the click at once, as tvOS's do.
  */
 fun Modifier.tvClickable(
     onLongClick: (() -> Unit)? = null,
+    onPressedChange: (Boolean) -> Unit = {},
     onClick: () -> Unit,
 ): Modifier = composed {
     val sounds = LocalUiSounds.current
     val click by rememberUpdatedState({ sounds?.select(); onClick() })
     val longClick by rememberUpdatedState(onLongClick?.let { { sounds?.select(); it() } })
+    val pressedChange by rememberUpdatedState(onPressedChange)
     var pressed by remember { mutableStateOf(false) }
     var longPressed by remember { mutableStateOf(false) }
 
@@ -58,14 +61,17 @@ fun Modifier.tvClickable(
                     if (repeat == 0) {
                         pressed = true
                         longPressed = false
+                        pressedChange(true)
                     } else if (pressed && !longPressed && longClick != null) {
                         longPressed = true
                         pressed = false
+                        pressedChange(false)
                         longClick?.invoke()
                     }
                     true
                 }
                 KeyEventType.KeyUp -> {
+                    if (pressed) pressedChange(false)
                     if (pressed && !longPressed) click()
                     pressed = false
                     longPressed = false
@@ -74,7 +80,14 @@ fun Modifier.tvClickable(
                 else -> false
             }
         }
-        .onFocusChanged { if (it.isFocused) sounds?.onFocusMoved() }
+        .onFocusChanged {
+            if (it.isFocused) sounds?.onFocusMoved()
+            // Its key-up will go elsewhere, so nothing else would release it.
+            if (!it.isFocused && pressed) {
+                pressed = false
+                pressedChange(false)
+            }
+        }
         .focusable()
 }
 

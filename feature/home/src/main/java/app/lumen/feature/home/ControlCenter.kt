@@ -3,9 +3,6 @@ package app.lumen.feature.home
 import android.os.SystemClock
 import androidx.annotation.DrawableRes
 import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.Spring
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -14,6 +11,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -49,8 +47,10 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import app.lumen.core.designsystem.Avatar
 import app.lumen.core.designsystem.GlassOverlay
+import app.lumen.core.designsystem.animatePressableScale
 import app.lumen.core.designsystem.LumenColors
 import app.lumen.core.designsystem.LumenDimens
 import app.lumen.core.designsystem.LumenText
@@ -70,9 +70,7 @@ internal class ControlCenterActions(
     val onScreensaver: () -> Unit,
     val onNetwork: () -> Unit,
     val onSound: () -> Unit,
-    val onSettings: () -> Unit,
     val onProfile: () -> Unit,
-    val onAndroidSettings: () -> Unit,
     val onSearch: () -> Unit,
     val onAccessibility: () -> Unit,
 )
@@ -90,22 +88,31 @@ internal class ControlCenterStatus(
 
 private enum class ControlPage { Main, Sound, Network, SleepTimer }
 
-private val ColumnGap = 10.dp
-private val TileWidth = 150.dp
-private val TileHeight = 66.dp
-private val RoundButtonSize = 52.dp
+/** The tabs along the top, as on tvOS, which come and go with what's active. */
+private enum class ControlTab { NowPlaying, General }
+
+private const val CONTROL_CENTER_DIM = 0.45f
+private val ColumnGap = 8.dp
+/** Measured from the picture in Apple's user guide, where these take about a tenth of the screen's width each. */
+private val TileWidth = 102.dp
+private val TileHeight = 54.dp
+private val RoundButtonSize = 46.dp
 private val SmallRoundButtonSize = 42.dp
+private val TabSize = 28.dp
 private val PanelWidth = TileWidth * 2 + ColumnGap
+/** For what needs room for words: what's playing, and the panels behind the tiles. */
+private val WidePanelWidth = 264.dp
 
 /** Minutes offered by the Sleep Timer. */
 private val SleepTimerOptions = listOf(15, 30, 60, 90, 120)
 
 /**
- * tvOS's Control Center: loose glass tiles in the top-right corner, with no panel behind them,
- * the screen still in view around them. One large tile, smaller ones beside it, round buttons
- * below, the time above, and what's playing on top when something is. Sound, Wi-Fi and the Sleep
- * Timer open their own glass panels in place, and Back returns from them. [sleepReady] says whether
- * Sleep can act yet, or has to lead to setting up the Home Button service.
+ * tvOS's Control Center: loose glass tiles in the top-right corner, with no panel behind them, the
+ * screen still in view around them. A row along the top has the time, status icons and tabs. It opens
+ * on the general tab with focus on the tab itself, so a click right after opening does nothing drastic,
+ * and Left and Right move between tabs, with Now Playing there only while something is. Sound, Wi-Fi
+ * and the Sleep Timer open their own glass panels in place, and Back returns from them. [sleepReady]
+ * says whether Sleep can act yet, or has to lead to setting up the Home Button service.
  */
 @Composable
 internal fun ControlCenter(
@@ -118,6 +125,9 @@ internal fun ControlCenter(
     onDismiss: () -> Unit,
 ) {
     var page by remember { mutableStateOf(ControlPage.Main) }
+    var chosenTab by remember { mutableStateOf(ControlTab.General) }
+    // Its session can end while the tab is showing.
+    val tab = if (status.nowPlaying == null) ControlTab.General else chosenTab
     val context = LocalContext.current
     fun run(action: () -> Unit): () -> Unit = {
         onDismiss()
@@ -126,6 +136,8 @@ internal fun ControlCenter(
     GlassOverlay(
         onDismiss = { if (page == ControlPage.Main) onDismiss() else page = ControlPage.Main },
         alignment = Alignment.TopEnd,
+        // Its tiles float loose, so whatever's behind shows between them and has to stay back.
+        dim = CONTROL_CENTER_DIM,
     ) { _, first ->
         // The buttons are replaced when moving between pages, so focus has to follow.
         LaunchedEffect(page) {
@@ -135,51 +147,75 @@ internal fun ControlCenter(
         Column(
             Modifier
                 .padding(horizontal = LumenDimens.SafeHorizontal, vertical = LumenDimens.SafeVertical)
-                .width(PanelWidth),
+                .width(if (page == ControlPage.Main && tab == ControlTab.General) PanelWidth else WidePanelWidth),
             verticalArrangement = Arrangement.spacedBy(ColumnGap),
         ) {
-            val (time, date) = rememberClockText()
-            Row(Modifier.fillMaxWidth().padding(bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                LumenText(date, LumenType.Caption, Modifier.weight(1f), color = LumenColors.TextSecondary, maxLines = 1)
-                LumenText(time, LumenType.Headline)
-            }
-            when (page) {
-                ControlPage.Main -> {
-                    status.nowPlaying?.let { NowPlayingTile(it, status.nowPlayingApp, run { it.open(context) }) }
-                    Row(horizontalArrangement = Arrangement.spacedBy(ColumnGap)) {
-                        ControlTile(
-                            title = "Sleep",
-                            icon = R.drawable.ic_cc_power,
-                            onClick = run(actions.onSleep),
-                            height = TileHeight * 2 + ColumnGap,
-                            large = true,
-                            caption = "Set Up".takeUnless { sleepReady },
-                            modifier = Modifier.focusRequester(first),
-                        )
-                        Column(verticalArrangement = Arrangement.spacedBy(ColumnGap)) {
-                            ControlTile(
-                                if (status.network?.kind == NetworkStatus.Kind.Ethernet) "Ethernet" else "Wi-Fi",
-                                R.drawable.ic_cc_wifi,
-                                { page = ControlPage.Network },
-                            )
-                            ControlTile("Screen Saver", R.drawable.ic_cc_screensaver, run(actions.onScreensaver))
+            val minutesLeft = rememberMinutesLeft(status.sleepEndsAt)
+            Row(
+                Modifier.fillMaxWidth().padding(bottom = 2.dp).height(TabSize),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                LumenText(rememberClockText().first, LumenType.Caption)
+                if (status.network?.hasInternet == false) StatusGlyph("No internet", R.drawable.ic_status_no_internet)
+                if (status.sleepEndsAt != null) StatusGlyph("Sleep Timer", R.drawable.ic_cc_timer)
+                if (status.headphones != null) StatusGlyph("Headphones", R.drawable.ic_status_headphones)
+                Spacer(Modifier.weight(1f))
+                if (page == ControlPage.Main) {
+                    if (status.nowPlaying != null) {
+                        TabButton(selected = tab == ControlTab.NowPlaying, onFocused = { chosenTab = ControlTab.NowPlaying }, onClick = {}) { color ->
+                            Image(painterResource(R.drawable.ic_status_music), "Now Playing", Modifier.size(15.dp), colorFilter = ColorFilter.tint(color))
                         }
                     }
-                    Row(horizontalArrangement = Arrangement.spacedBy(ColumnGap)) {
-                        ControlTile("Sound", R.drawable.ic_cc_volume, { page = ControlPage.Sound })
-                        val minutesLeft = rememberMinutesLeft(status.sleepEndsAt)
-                        ControlTile(
-                            title = if (minutesLeft != null) "$minutesLeft min left" else "Sleep Timer",
-                            icon = R.drawable.ic_cc_timer,
-                            onClick = if (sleepReady) ({ page = ControlPage.SleepTimer }) else run(actions.onSleep),
-                        )
+                    TabButton(
+                        selected = tab == ControlTab.General,
+                        onFocused = { chosenTab = ControlTab.General },
+                        onClick = {},
+                        modifier = Modifier.focusRequester(first),
+                    ) { color ->
+                        Image(painterResource(R.drawable.ic_cc_tune), "Controls", Modifier.size(15.dp), colorFilter = ColorFilter.tint(color))
                     }
-                    Row(horizontalArrangement = Arrangement.spacedBy(ColumnGap), verticalAlignment = Alignment.CenterVertically) {
-                        RoundButton(run(actions.onProfile)) { Avatar(profileName, picture = profilePicture, size = 34.dp) }
-                        RoundButton(run(actions.onSearch)) { color -> RoundGlyph("Search", R.drawable.ic_cc_search, color) }
-                        RoundButton(run(actions.onSettings)) { color -> RoundGlyph("Settings", R.drawable.ic_settings_gear, color) }
-                        RoundButton(run(actions.onAccessibility)) { color -> RoundGlyph("Accessibility", R.drawable.ic_cc_accessibility, color) }
-                        RoundButton(run(actions.onAndroidSettings)) { color -> RoundGlyph("Android Settings", R.drawable.ic_cc_tune, color) }
+                    TabButton(selected = false, onFocused = {}, onClick = run(actions.onProfile)) {
+                        Avatar(profileName, picture = profilePicture, size = TabSize - 4.dp)
+                    }
+                }
+            }
+            when (page) {
+                ControlPage.Main -> when (tab) {
+                    ControlTab.NowPlaying -> status.nowPlaying?.let { NowPlayingTile(it, status.nowPlayingApp, run { it.open(context) }) }
+                    ControlTab.General -> {
+                        Row(horizontalArrangement = Arrangement.spacedBy(ColumnGap)) {
+                            ControlTile(
+                                title = "Sleep",
+                                icon = R.drawable.ic_cc_power,
+                                onClick = run(actions.onSleep),
+                                height = TileHeight * 2 + ColumnGap,
+                                large = true,
+                                caption = "Set Up".takeUnless { sleepReady },
+                            )
+                            Column(verticalArrangement = Arrangement.spacedBy(ColumnGap)) {
+                                ControlTile(
+                                    if (status.network?.kind == NetworkStatus.Kind.Ethernet) "Ethernet" else "Wi-Fi",
+                                    R.drawable.ic_cc_wifi,
+                                    { page = ControlPage.Network },
+                                    caption = connectionLabel(status.network),
+                                )
+                                ControlTile("Screen Saver", R.drawable.ic_cc_screensaver, run(actions.onScreensaver))
+                            }
+                        }
+                        Row(horizontalArrangement = Arrangement.spacedBy(ColumnGap)) {
+                            ControlTile("Sound", R.drawable.ic_cc_volume, { page = ControlPage.Sound }, caption = status.headphones ?: "TV")
+                            ControlTile(
+                                title = "Sleep Timer",
+                                icon = R.drawable.ic_cc_timer,
+                                onClick = if (sleepReady) ({ page = ControlPage.SleepTimer }) else run(actions.onSleep),
+                                caption = minutesLeft?.let { "$it min left" },
+                            )
+                        }
+                        Row(horizontalArrangement = Arrangement.spacedBy(ColumnGap), verticalAlignment = Alignment.CenterVertically) {
+                            RoundButton(run(actions.onSearch)) { color -> RoundGlyph("Search", R.drawable.ic_cc_search, color) }
+                            RoundButton(run(actions.onAccessibility)) { color -> RoundGlyph("Accessibility", R.drawable.ic_cc_accessibility, color) }
+                        }
                     }
                 }
                 ControlPage.Sound -> SoundPanel(status, onClickSounds, run(actions.onSound), first)
@@ -188,6 +224,57 @@ internal fun ControlCenter(
             }
         }
     }
+}
+
+/** A small status icon by the time. */
+@Composable
+private fun StatusGlyph(description: String, @DrawableRes icon: Int) {
+    Image(painterResource(icon), description, Modifier.size(14.dp), colorFilter = ColorFilter.tint(LumenColors.TextPrimary))
+}
+
+/** A tab along the top: it shows its page as soon as focus reaches it, as tvOS's do. [content] gets the color to draw it in. */
+@Composable
+private fun TabButton(
+    selected: Boolean,
+    onFocused: () -> Unit,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    content: @Composable (Color) -> Unit,
+) {
+    val look = rememberFocusLook()
+    Box(
+        modifier
+            .onFocusChanged {
+                look.onFocus(it.isFocused)
+                if (it.isFocused) onFocused()
+            }
+            .tvClickable(onPressedChange = look.onPressed, onClick = onClick)
+            .graphicsLayer {
+                val scale = look.scale()
+                scaleX = scale
+                scaleY = scale
+            }
+            .size(TabSize)
+            .liquidGlass(
+                LumenDimens.CapsuleCorner,
+                tint = when {
+                    look.focused -> LumenColors.GlassFocused
+                    selected -> SelectedTabTint
+                    else -> LumenColors.GlassTint
+                },
+            ),
+        contentAlignment = Alignment.Center,
+    ) {
+        content(look.content)
+    }
+}
+
+private val SelectedTabTint = Color(0x47FFFFFF)
+
+private fun connectionLabel(network: NetworkStatus?): String = when {
+    network == null || network.kind == NetworkStatus.Kind.None -> "Off"
+    network.hasInternet -> "Connected"
+    else -> "No Internet"
 }
 
 /** A sheet of glass in Control Center's place, for one of its panels. */
@@ -434,16 +521,19 @@ private fun trackTime(ms: Long): String {
 @Composable
 private fun rememberFocusLook(): FocusLook {
     var focused by remember { mutableStateOf(false) }
-    val scale by animateFloatAsState(
-        targetValue = if (focused) 1.06f else 1f,
-        animationSpec = spring(dampingRatio = 0.7f, stiffness = Spring.StiffnessMediumLow),
-        label = "controlScale",
-    )
+    var pressed by remember { mutableStateOf(false) }
+    val scale by animatePressableScale(focused, pressed, 1.06f, "controlScale")
     val content by animateColorAsState(if (focused) LumenColors.OnFocused else LumenColors.TextPrimary, tween(120), label = "controlContent")
-    return FocusLook(focused, { scale }, content) { focused = it }
+    return FocusLook(focused, { scale }, content, { focused = it }, { pressed = it })
 }
 
-private class FocusLook(val focused: Boolean, val scale: () -> Float, val content: Color, val onFocus: (Boolean) -> Unit)
+private class FocusLook(
+    val focused: Boolean,
+    val scale: () -> Float,
+    val content: Color,
+    val onFocus: (Boolean) -> Unit,
+    val onPressed: (Boolean) -> Unit,
+)
 
 @Composable
 private fun ControlTile(
@@ -459,7 +549,7 @@ private fun ControlTile(
     Box(
         modifier
             .onFocusChanged { look.onFocus(it.isFocused) }
-            .tvClickable(onClick = onClick)
+            .tvClickable(onPressedChange = look.onPressed, onClick = onClick)
             .graphicsLayer {
                 val scale = look.scale()
                 scaleX = scale
@@ -470,14 +560,17 @@ private fun ControlTile(
     ) {
         if (large) {
             Column(Modifier.align(Alignment.Center), horizontalAlignment = Alignment.CenterHorizontally) {
-                Image(painterResource(icon), null, Modifier.size(52.dp), colorFilter = ColorFilter.tint(look.content))
-                LumenText(title, LumenType.Body, Modifier.padding(top = 10.dp), color = look.content, maxLines = 1, textAlign = TextAlign.Center)
-                if (caption != null) LumenText(caption, LumenType.Caption, color = look.content.copy(alpha = 0.6f), maxLines = 1)
+                Image(painterResource(icon), null, Modifier.size(44.dp), colorFilter = ColorFilter.tint(look.content))
+                LumenText(title, LumenType.Caption, Modifier.padding(top = 6.dp), color = look.content, maxLines = 1, textAlign = TextAlign.Center)
+                if (caption != null) LumenText(caption, TileCaption, color = look.content.copy(alpha = 0.65f), maxLines = 1)
             }
         } else {
-            Row(Modifier.align(Alignment.CenterStart).padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-                Image(painterResource(icon), null, Modifier.size(24.dp), colorFilter = ColorFilter.tint(look.content))
-                LumenText(title, LumenType.Body, Modifier.padding(start = 8.dp), color = look.content, maxLines = 1)
+            Row(Modifier.align(Alignment.CenterStart).padding(start = 10.dp, end = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                Image(painterResource(icon), null, Modifier.size(20.dp), colorFilter = ColorFilter.tint(look.content))
+                Column(Modifier.padding(start = 7.dp)) {
+                    LumenText(title, TileTitle, color = look.content, maxLines = 2)
+                    if (caption != null) LumenText(caption, TileCaption, color = look.content.copy(alpha = 0.65f), maxLines = 1)
+                }
             }
         }
     }
@@ -495,7 +588,7 @@ private fun RoundButton(
     Box(
         modifier
             .onFocusChanged { look.onFocus(it.isFocused) }
-            .tvClickable(onClick = onClick)
+            .tvClickable(onPressedChange = look.onPressed, onClick = onClick)
             .graphicsLayer {
                 val scale = look.scale()
                 scaleX = scale
@@ -515,3 +608,5 @@ private fun RoundGlyph(description: String, @DrawableRes icon: Int, color: Color
 }
 
 private val TileCorner = 22.dp
+private val TileTitle = LumenType.Caption.copy(fontSize = 12.sp, lineHeight = 14.sp)
+private val TileCaption = LumenType.Caption.copy(fontSize = 10.5.sp, lineHeight = 13.sp)

@@ -27,6 +27,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -42,6 +43,7 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
@@ -115,6 +117,23 @@ private const val ROW_FOCUS_MS = 80
  */
 val LocalFocusIdle = compositionLocalOf { false }
 
+/** Quick going down, so even a short click shows; focus's own spring brings it back up. */
+private val PressSpec = tween<Float>(70, easing = FastOutSlowInEasing)
+private val FocusSpring = spring<Float>(dampingRatio = 0.8f, stiffness = 480f)
+
+/**
+ * The scale of a control that grows to [focusedScale] with focus and sinks back to its resting size
+ * while select is held, the instant answer tvOS gives a click. Read it in a layer block to stay out
+ * of composition.
+ */
+@Composable
+fun animatePressableScale(focused: Boolean, pressed: Boolean, focusedScale: Float, label: String = "pressableScale"): State<Float> =
+    animateFloatAsState(
+        targetValue = if (focused && !pressed) focusedScale else 1f,
+        animationSpec = if (pressed) PressSpec else FocusSpring,
+        label = label,
+    )
+
 /**
  * A tvOS-style app tile with a glass edge: lifts and grows on focus, leans into D-pad presses, and
  * reveals its label underneath. [art] is the app's 16:9 tile artwork.
@@ -142,11 +161,12 @@ fun AppTile(
 ) {
     val idle = LocalFocusIdle.current
     var focused by remember { mutableStateOf(false) }
+    var pressed by remember { mutableStateOf(false) }
     // -1..1 per axis; positive leans right / down.
     val tiltX = remember { Animatable(0f) }
     val tiltY = remember { Animatable(0f) }
     val scope = rememberCoroutineScope()
-    val settle = spring<Float>(dampingRatio = 0.45f, stiffness = Spring.StiffnessLow)
+    val settle = spring<Float>(dampingRatio = 0.6f, stiffness = 260f)
     LaunchedEffect(focused) {
         if (focused) {
             tiltX.snapTo(TileMotion.dx)
@@ -182,11 +202,11 @@ fun AppTile(
     val scale by animateFloatAsState(
         targetValue = when {
             lifted -> LIFTED_SCALE
-            !focused -> 1f
+            !focused || pressed -> 1f
             idle -> idleFocusScale
             else -> focusScale
         },
-        animationSpec = spring(dampingRatio = 0.7f, stiffness = Spring.StiffnessMediumLow),
+        animationSpec = if (pressed) PressSpec else FocusSpring,
         label = "tileScale",
     )
     // Only the focused tile casts a shadow: across a whole screen of tiles they add up on the Chromecast.
@@ -233,7 +253,7 @@ fun AppTile(
                     }
                     false
                 }
-                .tvClickable(onLongClick = onLongClick, onClick = onClick)
+                .tvClickable(onLongClick = onLongClick, onPressedChange = { pressed = it }, onClick = onClick)
                 .graphicsLayer {
                     scaleX = scale
                     scaleY = scale
@@ -252,7 +272,7 @@ fun AppTile(
                     if (focusAlpha > 0f) {
                         drawRect(
                             Brush.radialGradient(
-                                listOf(Color.White.copy(alpha = 0.32f * focusAlpha), Color.Transparent),
+                                listOf(Color.White.copy(alpha = 0.16f * focusAlpha), Color.Transparent),
                                 center = Offset(
                                     size.width * (0.3f - tiltX.value * 0.35f),
                                     size.height * (-0.1f - tiltY.value * 0.35f),
@@ -261,7 +281,7 @@ fun AppTile(
                             ),
                         )
                     }
-                    drawGlassRim(LumenDimens.TileCorner, strength = 0.5f + 0.5f * focusAlpha)
+                    drawGlassRim(LumenDimens.TileCorner, strength = 0.2f + 0.7f * focusAlpha)
                 },
         ) {
             Image(
@@ -304,15 +324,12 @@ fun MenuRow(
     onFocused: () -> Unit = {},
 ) {
     var focused by remember { mutableStateOf(false) }
+    var pressed by remember { mutableStateOf(false) }
     val background by animateColorAsState(if (focused) LumenColors.Focused else Color.Transparent, tween(ROW_FOCUS_MS), label = "rowBg")
     val content by animateColorAsState(if (focused) LumenColors.OnFocused else LumenColors.TextPrimary, tween(ROW_FOCUS_MS), label = "rowFg")
     val secondary = if (focused) LumenColors.OnFocused.copy(alpha = 0.6f) else LumenColors.TextSecondary
-    val scale by animateFloatAsState(
-        targetValue = if (focused) 1.035f else 1f,
-        animationSpec = spring(dampingRatio = 0.65f, stiffness = Spring.StiffnessMediumLow),
-        label = "rowScale",
-    )
-    val shape = RoundedCornerShape(22.dp)
+    val scale by animatePressableScale(focused, pressed, 1.02f, "rowScale")
+    val shape = RoundedCornerShape(percent = 50)
 
     Row(
         modifier = modifier
@@ -321,21 +338,21 @@ fun MenuRow(
                 focused = it.isFocused
                 if (it.isFocused) onFocused()
             }
-            .tvClickable(onClick = onClick)
+            .tvClickable(onPressedChange = { pressed = it }, onClick = onClick)
             .graphicsLayer {
                 scaleX = scale
                 scaleY = scale
             }
             .background(background, shape)
-            .padding(horizontal = 20.dp, vertical = 13.dp),
+            .padding(horizontal = 20.dp, vertical = 8.5.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(14.dp),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         leading?.invoke()
-        LumenText(title, LumenType.Headline, Modifier.weight(1f), color = content, maxLines = 1)
-        if (value != null) LumenText(value, LumenType.Body, color = secondary, maxLines = 1)
-        if (checked) LumenText("✓", LumenType.Headline, color = content)
-        if (chevron) LumenText("›", LumenType.Headline, color = secondary)
+        LumenText(title, LumenType.Row, Modifier.weight(1f), color = content, maxLines = 1)
+        if (value != null) LumenText(value, LumenType.Row, color = secondary, maxLines = 1)
+        if (checked) Image(painterResource(R.drawable.ic_row_check), null, Modifier.size(18.dp), colorFilter = ColorFilter.tint(content))
+        if (chevron) Image(painterResource(R.drawable.ic_row_chevron), null, Modifier.size(18.dp), colorFilter = ColorFilter.tint(secondary))
     }
 }
 
@@ -393,16 +410,13 @@ fun Clock(
 ) {
     val showAvatar = profilePicture != null || profileName.isNotBlank()
     var focused by remember { mutableStateOf(false) }
-    val scale by animateFloatAsState(
-        targetValue = if (focused) 1.12f else 1f,
-        animationSpec = spring(dampingRatio = 0.7f, stiffness = Spring.StiffnessMediumLow),
-        label = "clockScale",
-    )
+    var pressed by remember { mutableStateOf(false) }
+    val scale by animatePressableScale(focused, pressed, 1.12f, "clockScale")
     val content by animateColorAsState(if (focused) LumenColors.OnFocused else LumenColors.TextPrimary, tween(160), label = "clockText")
     Row(
         modifier
             .onFocusChanged { focused = it.isFocused }
-            .tvClickable(onClick = onClick)
+            .tvClickable(onPressedChange = { pressed = it }, onClick = onClick)
             .graphicsLayer {
                 scaleX = scale
                 scaleY = scale

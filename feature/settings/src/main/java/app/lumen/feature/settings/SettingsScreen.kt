@@ -4,11 +4,16 @@ import android.content.Intent
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.annotation.DrawableRes
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -25,7 +30,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.items
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -33,11 +40,11 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -51,6 +58,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
@@ -64,6 +72,7 @@ import app.lumen.core.designsystem.MenuRow
 import app.lumen.core.designsystem.SectionTitle
 import app.lumen.core.designsystem.TextEntryDialog
 import app.lumen.core.designsystem.WallpaperBackground
+import app.lumen.core.designsystem.drawGlassRim
 import app.lumen.core.designsystem.rememberFrostedWallpaper
 import app.lumen.core.settings.GradientPreset
 import app.lumen.core.settings.LauncherSettings
@@ -73,38 +82,53 @@ import app.lumen.core.system.DeviceStatus
 import app.lumen.core.system.HomeOverride
 import app.lumen.core.system.SystemActions
 
-private enum class SettingsPage(val title: String, val description: String) {
-    Main("Settings", "Make Atrium yours. Changes apply instantly."),
-    Wallpaper("Wallpaper", "Pick a background for the home screen. Focus a wallpaper to preview it."),
-    ScreenSaver("Screen Saver", "Looping nature scenes when the home screen sits idle. While one runs: Up picks a category, Left and Right change scene, Down names it. Back on the first app starts one."),
-    HiddenApps("Hidden Apps", "Apps you've hidden from the home screen. Select one to bring it back."),
+/** Where a page sits in the tree, what it's for, and the picture beside its list. */
+private enum class SettingsPage(val title: String, val parent: SettingsPage?, @DrawableRes val glyph: Int, val description: String) {
+    Main("Settings", null, R.drawable.ic_settings_glyph, "Make Atrium yours. Changes apply instantly."),
+    Appearance("Appearance", Main, R.drawable.ic_settings_appearance, "How the home screen looks."),
+    Wallpaper("Wallpaper", Appearance, R.drawable.ic_settings_appearance, "Pick a background for the home screen. Focus one to preview it."),
+    ScreenSaver("Screen Saver", Main, R.drawable.ic_settings_screensaver, "Looping scenes when the home screen sits idle. While one runs, Up picks a category, Left and Right change scene, and Down names it."),
+    Apps("Apps", Main, R.drawable.ic_settings_apps, "Which apps show on the home screen."),
+    HiddenApps("Hidden Apps", Apps, R.drawable.ic_settings_apps, "Apps you've hidden from the home screen. Select one to bring it back."),
+    Sound("Sound", Main, R.drawable.ic_settings_sound, "Interface sounds, and what's playing."),
+    HomeButton("Remote and Home Button", Main, R.drawable.ic_settings_remote, "What the remote's Home button does."),
+    System("System", Main, R.drawable.ic_settings_info, "This TV, and Atrium."),
 }
 
+/** What the column beside the list shows: tvOS keeps a large picture and the focused row's explanation there. */
+private data class SettingsVisual(@DrawableRes val glyph: Int, val text: String)
+
+/**
+ * Laid out as tvOS Settings is: a short list of topics, each leading to a page of its own, with a
+ * large picture and the focused row's explanation beside it. Pages push in from the side they lead
+ * to and go back the way they came. Always opens at the top, whatever was open last.
+ */
 @Composable
 fun SettingsScreen(viewModel: SettingsViewModel) {
     val settings by viewModel.settings.collectAsStateWithLifecycle()
-    var page by rememberSaveable { mutableStateOf(SettingsPage.Main) }
-    // The row a sub-page was opened from, which takes focus again on the way back.
-    var openedFrom by rememberSaveable { mutableStateOf(MAIN_FIRST_ROW) }
+    var page by remember { mutableStateOf(SettingsPage.Main) }
+    // The row each page was opened from, which takes focus again on the way back.
+    var openedFrom by remember { mutableStateOf(emptyMap<SettingsPage, String>()) }
     var preview by remember { mutableStateOf<Wallpaper?>(null) }
-    // What the focused row does, shown under the icon as tvOS does rather than in the row itself.
-    var hint by remember { mutableStateOf(page.description) }
+    var visual by remember { mutableStateOf(SettingsVisual(page.glyph, page.description)) }
 
     fun open(target: SettingsPage, fromRow: String) {
-        openedFrom = fromRow
+        openedFrom = openedFrom + (page to fromRow)
         page = target
-        hint = target.description
+        visual = SettingsVisual(target.glyph, target.description)
     }
 
     BackHandler(enabled = page != SettingsPage.Main) {
-        page = SettingsPage.Main
-        preview = null
+        if (page == SettingsPage.Wallpaper) preview = null
+        page = page.parent ?: SettingsPage.Main
     }
 
+    // Lifted on the Wallpaper page, so what's being previewed can be judged.
+    val dim by animateFloatAsState(if (page == SettingsPage.Wallpaper) WALLPAPER_PAGE_DIM else SETTINGS_DIM, tween(400), label = "settingsDim")
     Box(Modifier.fillMaxSize().background(LumenColors.Background)) {
         WallpaperBackground(preview ?: settings.wallpaper, Modifier.fillMaxSize())
         // Dark and even, as tvOS Settings is: the wallpaper only tints it, and the list needs no glass to stay readable.
-        Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.62f)))
+        Spacer(Modifier.fillMaxSize().drawBehind { drawRect(Color.Black, alpha = dim) })
 
         // The page's name, small and centered at the top, like tvOS.
         AnimatedContent(
@@ -112,24 +136,24 @@ fun SettingsScreen(viewModel: SettingsViewModel) {
             transitionSpec = { fadeIn(tween(300)) togetherWith fadeOut(tween(150)) },
             modifier = Modifier.align(Alignment.TopCenter).padding(top = LumenDimens.SafeVertical),
             label = "settingsHeading",
-        ) { p -> LumenText(p.title, LumenType.Headline, color = LumenColors.TextSecondary) }
+        ) { p -> LumenText(p.title, LumenType.Section, color = LumenColors.TextSecondary) }
 
         Row(
             Modifier
                 .fillMaxSize()
                 .padding(horizontal = LumenDimens.SafeHorizontal, vertical = LumenDimens.SafeVertical)
-                .padding(top = 36.dp),
+                .padding(top = 28.dp),
         ) {
             Column(
-                Modifier.weight(0.4f).fillMaxHeight(),
+                Modifier.weight(0.44f).fillMaxHeight(),
                 verticalArrangement = Arrangement.Center,
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
-                Image(painterResource(R.drawable.ic_settings_glyph), null, Modifier.size(170.dp))
-                Spacer(Modifier.height(24.dp))
-                // Holds its height, so the icon doesn't shift as descriptions of different lengths come and go.
+                PageGlyph(visual.glyph)
+                Spacer(Modifier.height(22.dp))
+                // Holds its height, so the picture doesn't shift as descriptions of different lengths come and go.
                 AnimatedContent(
-                    targetState = hint,
+                    targetState = visual.text,
                     transitionSpec = { fadeIn(tween(200)) togetherWith fadeOut(tween(100)) },
                     modifier = Modifier.height(HintHeight),
                     contentAlignment = Alignment.TopCenter,
@@ -144,16 +168,20 @@ fun SettingsScreen(viewModel: SettingsViewModel) {
                     )
                 }
             }
-            Spacer(Modifier.width(40.dp))
+            Spacer(Modifier.width(24.dp))
             // A plain list, no sheet behind it, as in tvOS Settings. Swatches still frost their own glass.
             CompositionLocalProvider(LocalGlassBackdrop provides rememberFrostedWallpaper(preview ?: settings.wallpaper)) {
                 AnimatedContent(
                     targetState = page,
                     transitionSpec = {
-                        (fadeIn(tween(300)) + slideInHorizontally(tween(300)) { it / 12 }) togetherWith fadeOut(tween(150))
+                        // In from the side it leads to, and back the way it came.
+                        val direction = if (targetState.parent == initialState) 1 else -1
+                        val slide = tween<IntOffset>(320, easing = FastOutSlowInEasing)
+                        (fadeIn(tween(260, delayMillis = 60)) + slideInHorizontally(slide) { direction * it / 10 }) togetherWith
+                            (fadeOut(tween(140)) + slideOutHorizontally(slide) { -direction * it / 14 })
                     },
                     modifier = Modifier
-                        .weight(0.6f)
+                        .weight(0.56f)
                         .fillMaxHeight()
                         // Rows fade out at the edges as they scroll, rather than being cut off under the heading.
                         .graphicsLayer(compositingStrategy = CompositingStrategy.Offscreen)
@@ -167,11 +195,17 @@ fun SettingsScreen(viewModel: SettingsViewModel) {
                         },
                     label = "settingsPage",
                 ) { p ->
+                    val rows = SettingsRows(focusRow = openedFrom[p], glyph = p.glyph, onVisual = { visual = it })
                     when (p) {
-                        SettingsPage.Main -> MainPage(settings, viewModel, focusRow = openedFrom, onOpen = ::open, onHint = { hint = it })
+                        SettingsPage.Main -> MainPage(rows, ::open)
+                        SettingsPage.Appearance -> AppearancePage(rows, settings, viewModel, ::open)
                         SettingsPage.Wallpaper -> WallpaperPage(settings, viewModel, onPreview = { preview = it })
                         SettingsPage.ScreenSaver -> ScreenSaverPage(settings, viewModel)
+                        SettingsPage.Apps -> AppsPage(rows, settings, viewModel, ::open)
                         SettingsPage.HiddenApps -> HiddenAppsPage(viewModel)
+                        SettingsPage.Sound -> SoundPage(rows, settings, viewModel)
+                        SettingsPage.HomeButton -> HomeButtonPage(rows, settings, viewModel)
+                        SettingsPage.System -> SystemPage(rows)
                     }
                 }
             }
@@ -179,9 +213,38 @@ fun SettingsScreen(viewModel: SettingsViewModel) {
     }
 }
 
-private const val MAIN_FIRST_ROW = "Wallpaper"
-private val HintHeight = 96.dp
+private const val SETTINGS_DIM = 0.72f
+private const val WALLPAPER_PAGE_DIM = 0.35f
+private val HintHeight = 84.dp
 private val ListFadeEdge = 20.dp
+private val ListPadding = PaddingValues(horizontal = 16.dp, vertical = 20.dp)
+
+/** The large picture beside the list, drawn as one of tvOS's graphite Settings tiles. */
+@Composable
+private fun PageGlyph(@DrawableRes glyph: Int) {
+    val shape = RoundedCornerShape(GlyphCorner)
+    Box(
+        Modifier
+            .size(GlyphWidth, GlyphHeight)
+            .background(Brush.verticalGradient(0f to GlyphTop, 1f to GlyphBottom), shape)
+            .drawWithContent {
+                drawContent()
+                drawGlassRim(GlyphCorner, strength = 0.5f)
+            },
+        contentAlignment = Alignment.Center,
+    ) {
+        Crossfade(targetState = glyph, animationSpec = tween(200), label = "pageGlyph") { icon ->
+            Image(painterResource(icon), null, Modifier.size(GlyphIconSize))
+        }
+    }
+}
+
+private val GlyphWidth = 250.dp
+private val GlyphHeight = 150.dp
+private val GlyphCorner = 26.dp
+private val GlyphIconSize = 76.dp
+private val GlyphTop = Color(0xFF77777C)
+private val GlyphBottom = Color(0xFF39393C)
 
 @Composable
 private fun rememberInitialFocus(): FocusRequester {
@@ -200,26 +263,75 @@ private val ScreensaverDelays = listOf(2, 5, 10, 15, 0)
 
 private fun screensaverLabel(minutes: Int) = if (minutes == 0) "Never" else "$minutes Minutes"
 
+/** What every row of a page shares: which one takes focus first, and what to show beside the list. */
+private class SettingsRows(val focusRow: String?, val glyph: Int, val onVisual: (SettingsVisual) -> Unit)
+
+/** A page of [SettingsRow]s, with focus starting on the first unless it's coming back to one. */
 @Composable
-private fun MainPage(
-    settings: LauncherSettings,
-    viewModel: SettingsViewModel,
-    focusRow: String,
-    onOpen: (SettingsPage, String) -> Unit,
-    onHint: (String) -> Unit,
-) {
-    val context = LocalContext.current
+private fun RowsPage(content: LazyListScope.(FocusRequester) -> Unit) {
     val initial = rememberInitialFocus()
-    var serviceEnabled by remember { mutableStateOf(HomeOverride.isServiceEnabled(context)) }
-    var mediaAccess by remember { mutableStateOf(DeviceStatus.hasMediaAccess(context)) }
-    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
-        serviceEnabled = HomeOverride.isServiceEnabled(context)
-        mediaAccess = DeviceStatus.hasMediaAccess(context)
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = ListPadding,
+        verticalArrangement = Arrangement.spacedBy(2.dp),
+    ) {
+        content(initial)
     }
-    val version = remember {
-        runCatching { context.packageManager.getPackageInfo(context.packageName, 0).versionName }.getOrNull() ?: "?"
+}
+
+/** One row of a page: the same height throughout, as tvOS's are, with its explanation beside the list. */
+@Composable
+private fun SettingsRow(
+    rows: SettingsRows,
+    initial: FocusRequester,
+    title: String,
+    hint: String,
+    first: Boolean = false,
+    value: String? = null,
+    chevron: Boolean = false,
+    @DrawableRes glyph: Int = rows.glyph,
+    onClick: () -> Unit,
+) {
+    val takesFocus = if (rows.focusRow != null) title == rows.focusRow else first
+    MenuRow(
+        title = title,
+        onClick = onClick,
+        value = value,
+        chevron = chevron,
+        onFocused = { rows.onVisual(SettingsVisual(glyph, hint)) },
+        modifier = if (takesFocus) Modifier.focusRequester(initial) else Modifier,
+    )
+}
+
+/** Only topics, as on tvOS's first page. */
+@Composable
+private fun MainPage(rows: SettingsRows, onOpen: (SettingsPage, String) -> Unit) {
+    val topics = listOf(
+        SettingsPage.Appearance to "Wallpaper, Top Shelf artwork, the clock and your name.",
+        SettingsPage.ScreenSaver to "Scenes or your own photos, and when they start.",
+        SettingsPage.Apps to "Phone apps, and apps you've hidden.",
+        SettingsPage.Sound to "Click sounds, and Now Playing in Control Center.",
+        SettingsPage.HomeButton to "Make the remote's Home button open Atrium.",
+        SettingsPage.System to "Android Settings, Google TV and About.",
+    )
+    RowsPage { initial ->
+        items(topics, key = { it.first.name }) { (topic, hint) ->
+            SettingsRow(
+                rows,
+                initial,
+                title = topic.title,
+                hint = hint,
+                first = topic == topics.first().first,
+                chevron = true,
+                glyph = topic.glyph,
+                onClick = { onOpen(topic, topic.title) },
+            )
+        }
     }
-    val hiddenCount = settings.hidden.size
+}
+
+@Composable
+private fun AppearancePage(rows: SettingsRows, settings: LauncherSettings, viewModel: SettingsViewModel, onOpen: (SettingsPage, String) -> Unit) {
     var editingName by remember { mutableStateOf(false) }
     if (editingName) {
         TextEntryDialog(
@@ -230,112 +342,106 @@ private fun MainPage(
             allowBlank = true,
         )
     }
-
-    // One row of the list: the same height throughout, as tvOS's are, with its explanation under the icon.
-    @Composable
-    fun SettingsRow(title: String, hint: String, value: String? = null, chevron: Boolean = false, onClick: () -> Unit) {
-        MenuRow(
-            title = title,
-            onClick = onClick,
-            value = value,
-            chevron = chevron,
-            onFocused = { onHint(hint) },
-            modifier = if (title == focusRow) Modifier.focusRequester(initial) else Modifier,
-        )
-    }
-
-    LazyColumn(
-        modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 20.dp),
-        verticalArrangement = Arrangement.spacedBy(2.dp),
-    ) {
-        item { SectionTitle("Appearance") }
+    RowsPage { initial ->
         item {
             SettingsRow(
-                title = MAIN_FIRST_ROW,
-                hint = SettingsPage.Wallpaper.description,
+                rows,
+                initial,
+                title = SettingsPage.Wallpaper.title,
+                hint = "The background of the home screen.",
+                first = true,
                 value = when (val w = settings.wallpaper) {
                     is Wallpaper.Gradient -> w.preset.displayName
                     is Wallpaper.Image -> "Photo"
                 },
                 chevron = true,
-                onClick = { onOpen(SettingsPage.Wallpaper, MAIN_FIRST_ROW) },
+                onClick = { onOpen(SettingsPage.Wallpaper, SettingsPage.Wallpaper.title) },
             )
         }
         item {
             SettingsRow(
+                rows,
+                initial,
                 title = "Top Shelf Artwork",
-                hint = "Show artwork from the focused app above the top row, or its colors when it has none.",
+                hint = "Fill the screen with artwork from the focused app, or its colors when it has none.",
                 value = onOff(settings.ambientBackdrop),
                 onClick = { viewModel.setAmbientBackdrop(!settings.ambientBackdrop) },
             )
         }
         item {
             SettingsRow(
+                rows,
+                initial,
                 title = "Clock",
-                hint = "Show the time in the corner of the home screen. Press Up to reach it and open Control Center.",
+                hint = "Show the time in the corner of the home screen. It also opens Control Center.",
                 value = onOff(settings.showClock),
                 onClick = { viewModel.setShowClock(!settings.showClock) },
             )
         }
         item {
             SettingsRow(
-                title = "Screen Saver",
-                hint = SettingsPage.ScreenSaver.description,
-                value = settings.screensaverType.displayName,
-                chevron = true,
-                onClick = { onOpen(SettingsPage.ScreenSaver, "Screen Saver") },
-            )
-        }
-        item {
-            SettingsRow(
-                title = "Click Sounds",
-                hint = "A soft click as you move around and select.",
-                value = onOff(settings.navigationSounds),
-                onClick = { viewModel.setNavigationSounds(!settings.navigationSounds) },
-            )
-        }
-
-        item {
-            SettingsRow(
+                rows,
+                initial,
                 title = "Your Name",
-                hint = "Your initial is your picture next to the clock, unless you've added a photo as profile.jpg over ADB. Google doesn't share your account's photo with other apps.",
+                hint = "Your initial becomes your picture next to the clock.",
                 value = settings.profileName.ifBlank { "None" },
                 chevron = true,
                 onClick = { editingName = true },
             )
         }
+    }
+}
 
-        item { SectionTitle("Apps") }
+@Composable
+private fun AppsPage(rows: SettingsRows, settings: LauncherSettings, viewModel: SettingsViewModel, onOpen: (SettingsPage, String) -> Unit) {
+    val hiddenCount = settings.hidden.size
+    RowsPage { initial ->
         item {
             SettingsRow(
+                rows,
+                initial,
                 title = "Show Non-TV Apps",
                 hint = "Include phone apps that aren't designed for a remote.",
+                first = true,
                 value = onOff(settings.showPhoneApps),
                 onClick = { viewModel.setShowPhoneApps(!settings.showPhoneApps) },
             )
         }
         item {
             SettingsRow(
-                title = "Hidden Apps",
+                rows,
+                initial,
+                title = SettingsPage.HiddenApps.title,
                 hint = SettingsPage.HiddenApps.description,
                 value = if (hiddenCount == 0) "None" else hiddenCount.toString(),
                 chevron = true,
-                onClick = { onOpen(SettingsPage.HiddenApps, "Hidden Apps") },
+                onClick = { onOpen(SettingsPage.HiddenApps, SettingsPage.HiddenApps.title) },
             )
         }
+    }
+}
 
-        item { SectionTitle("Home Button") }
+@Composable
+private fun SoundPage(rows: SettingsRows, settings: LauncherSettings, viewModel: SettingsViewModel) {
+    val context = LocalContext.current
+    var mediaAccess by remember { mutableStateOf(DeviceStatus.hasMediaAccess(context)) }
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { mediaAccess = DeviceStatus.hasMediaAccess(context) }
+    RowsPage { initial ->
         item {
             SettingsRow(
-                title = "Open Atrium with Home",
-                hint = "Replace the Google TV home screen when you press Home.",
-                value = onOff(settings.homeOverride),
-                onClick = { viewModel.setHomeOverride(!settings.homeOverride) },
+                rows,
+                initial,
+                title = "Click Sounds",
+                hint = "A soft click as you move around and select.",
+                first = true,
+                value = onOff(settings.navigationSounds),
+                onClick = { viewModel.setNavigationSounds(!settings.navigationSounds) },
             )
         }
         item {
             SettingsRow(
+                rows,
+                initial,
                 title = "Now Playing",
                 hint = if (mediaAccess) {
                     "Shows what's playing in Control Center, with its controls, and an icon by the clock."
@@ -347,38 +453,73 @@ private fun MainPage(
                 onClick = { SystemActions.openNotificationAccess(context) },
             )
         }
+    }
+}
+
+@Composable
+private fun HomeButtonPage(rows: SettingsRows, settings: LauncherSettings, viewModel: SettingsViewModel) {
+    val context = LocalContext.current
+    var serviceEnabled by remember { mutableStateOf(HomeOverride.isServiceEnabled(context)) }
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { serviceEnabled = HomeOverride.isServiceEnabled(context) }
+    RowsPage { initial ->
         item {
             SettingsRow(
+                rows,
+                initial,
+                title = "Open Atrium with Home",
+                hint = "Replace the Google TV home screen when you press Home.",
+                first = true,
+                value = onOff(settings.homeOverride),
+                onClick = { viewModel.setHomeOverride(!settings.homeOverride) },
+            )
+        }
+        item {
+            SettingsRow(
+                rows,
+                initial,
                 title = "Home Button Service",
                 hint = if (serviceEnabled) {
                     "Enabled in Accessibility."
                 } else {
-                    "Required on Google TV for the Home button, holding it for Control Center, and Sleep. Turn on \"Atrium Home Button\" in Accessibility."
+                    "Needed for the Home button, holding it for Control Center, and Sleep. Turn on \"Atrium Home Button\" in Accessibility."
                 },
                 value = if (serviceEnabled) "On" else "Set Up",
                 chevron = true,
                 onClick = { SystemActions.openAccessibilitySettings(context) },
             )
         }
+    }
+}
+
+@Composable
+private fun SystemPage(rows: SettingsRows) {
+    val context = LocalContext.current
+    val version = remember {
+        runCatching { context.packageManager.getPackageInfo(context.packageName, 0).versionName }.getOrNull() ?: "?"
+    }
+    RowsPage { initial ->
         item {
             SettingsRow(
+                rows,
+                initial,
+                title = "Android Settings",
+                hint = "Network, accounts, display and everything else on this TV.",
+                first = true,
+                chevron = true,
+                onClick = { SystemActions.openAndroidSettings(context) },
+            )
+        }
+        item {
+            SettingsRow(
+                rows,
+                initial,
                 title = "Open Google TV Home",
                 hint = "Visit the original home screen. Atrium returns after you open another app.",
                 chevron = true,
                 onClick = { SystemActions.openStockHome(context) },
             )
         }
-
-        item { SectionTitle("System") }
-        item {
-            SettingsRow(
-                title = "Android Settings",
-                hint = "Network, accounts, display and everything else on this TV.",
-                chevron = true,
-                onClick = { SystemActions.openAndroidSettings(context) },
-            )
-        }
-        item { SettingsRow(title = "About Atrium", hint = "A minimalist home screen for your TV.", value = "Version $version", onClick = {}) }
+        item { SettingsRow(rows, initial, title = "About Atrium", hint = "A home screen for your TV, modeled on Apple TV's.", value = "Version $version", onClick = {}) }
     }
 }
 
@@ -388,7 +529,7 @@ private fun ScreenSaverPage(settings: LauncherSettings, viewModel: SettingsViewM
     val first = rememberInitialFocus()
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 20.dp),
+        contentPadding = ListPadding,
         verticalArrangement = Arrangement.spacedBy(2.dp),
     ) {
         item { SectionTitle("Show") }
@@ -442,7 +583,7 @@ private fun WallpaperPage(settings: LauncherSettings, viewModel: SettingsViewMod
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 20.dp),
+        contentPadding = ListPadding,
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         item { SectionTitle("Gradients", inset = 0.dp) }
@@ -510,7 +651,7 @@ private fun HiddenAppsPage(viewModel: SettingsViewModel) {
     }
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 20.dp),
+        contentPadding = ListPadding,
         verticalArrangement = Arrangement.spacedBy(2.dp),
     ) {
         items(hidden, key = { it.packageName }) { app ->
@@ -519,7 +660,7 @@ private fun HiddenAppsPage(viewModel: SettingsViewModel) {
                 title = app.label,
                 value = "Show",
                 onClick = { viewModel.unhide(app) },
-                leading = { Image(icon, null, Modifier.size(32.dp), filterQuality = FilterQuality.High) },
+                leading = { Image(icon, null, Modifier.size(26.dp), filterQuality = FilterQuality.High) },
                 modifier = if (app == hidden.first()) Modifier.focusRequester(first) else Modifier,
             )
         }

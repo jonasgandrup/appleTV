@@ -81,6 +81,8 @@ fun GlassDialog(
 fun GlassOverlay(
     onDismiss: () -> Unit,
     alignment: Alignment,
+    /** How far the screen behind darkens, higher for glass with busy things showing around it. */
+    dim: Float = 0.3f,
     content: @Composable BoxScope.(ImageBitmap?, FocusRequester) -> Unit,
 ) {
     // Captured out here, from the home screen's window; a dialog has a window of its own.
@@ -94,7 +96,7 @@ fun GlassOverlay(
         val appear = remember { Animatable(0f) }
         LaunchedEffect(Unit) { appear.animateTo(1f, spring(dampingRatio = 0.75f, stiffness = Spring.StiffnessMediumLow)) }
 
-        Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.3f)), contentAlignment = alignment) {
+        Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = dim)), contentAlignment = alignment) {
             CompositionLocalProvider(LocalLiveFrost provides null, LocalGlassBackdrop provides frost) {
                 Box(
                     Modifier.graphicsLayer {
@@ -151,15 +153,28 @@ fun TextEntryDialog(
     }
 }
 
-/** Places the panel to the right of [anchor], or to its left when there's no room, top-aligned with it and kept inside the safe area. */
+/**
+ * Keeps the tile in view and as few of its neighbors covered as can be. A tile low on the screen, like
+ * one in the top row at rest, gets the panel above it, centered on it. Others get it beside them, to
+ * the right or else to the left, top-aligned. Always inside the safe area.
+ */
 private fun Modifier.beside(anchor: Rect) = layout { measurable, constraints ->
     val panel = measurable.measure(constraints.copy(minWidth = 0, minHeight = 0))
     // Clears the tile's focus scale and shadow.
     val gap = 28.dp.roundToPx()
-    val right = anchor.right.roundToInt() + gap
-    val fitsRight = right + panel.width <= constraints.maxWidth - LumenDimens.SafeHorizontal.roundToPx()
-    val x = if (fitsRight) right else (anchor.left.roundToInt() - gap - panel.width).coerceAtLeast(0)
-    val margin = LumenDimens.SafeVertical.roundToPx()
-    val y = (anchor.top.roundToInt() - gap).coerceIn(margin, (constraints.maxHeight - panel.height - margin).coerceAtLeast(margin))
+    val marginX = LumenDimens.SafeHorizontal.roundToPx()
+    val marginY = LumenDimens.SafeVertical.roundToPx()
+    val above = anchor.center.y > constraints.maxHeight / 2 && anchor.top.roundToInt() - gap - panel.height >= marginY
+    val x: Int
+    val y: Int
+    if (above) {
+        x = (anchor.center.x.roundToInt() - panel.width / 2).coerceIn(marginX, (constraints.maxWidth - panel.width - marginX).coerceAtLeast(marginX))
+        y = anchor.top.roundToInt() - gap - panel.height
+    } else {
+        val right = anchor.right.roundToInt() + gap
+        val fitsRight = right + panel.width <= constraints.maxWidth - marginX
+        x = if (fitsRight) right else (anchor.left.roundToInt() - gap - panel.width).coerceAtLeast(0)
+        y = (anchor.top.roundToInt() - gap).coerceIn(marginY, (constraints.maxHeight - panel.height - marginY).coerceAtLeast(marginY))
+    }
     layout(constraints.maxWidth, constraints.maxHeight) { panel.place(x, y) }
 }

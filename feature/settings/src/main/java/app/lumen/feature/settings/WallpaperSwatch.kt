@@ -1,9 +1,6 @@
 package app.lumen.feature.settings
 
-import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateDpAsState
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.border
@@ -36,6 +33,7 @@ import app.lumen.core.designsystem.LumenColors
 import app.lumen.core.designsystem.LumenDimens
 import app.lumen.core.designsystem.LumenText
 import app.lumen.core.designsystem.LumenType
+import app.lumen.core.designsystem.animatePressableScale
 import app.lumen.core.designsystem.drawGlassRim
 import app.lumen.core.designsystem.rememberWallpaperImage
 import app.lumen.core.designsystem.tvClickable
@@ -54,11 +52,8 @@ internal fun WallpaperSwatch(
     modifier: Modifier = Modifier,
 ) {
     var focused by remember { mutableStateOf(false) }
-    val scale by animateFloatAsState(
-        targetValue = if (focused) 1.1f else 1f,
-        animationSpec = spring(dampingRatio = 0.7f, stiffness = Spring.StiffnessMediumLow),
-        label = "swatchScale",
-    )
+    var pressed by remember { mutableStateOf(false) }
+    val scale by animatePressableScale(focused, pressed, 1.1f, "swatchScale")
     val elevation by animateDpAsState(if (focused) 20.dp else 0.dp, tween(250), label = "swatchElevation")
     val shape = RoundedCornerShape(LumenDimens.TileCorner)
 
@@ -70,7 +65,7 @@ internal fun WallpaperSwatch(
                     focused = it.isFocused
                     if (it.isFocused) onFocused()
                 }
-                .tvClickable(onClick = onClick)
+                .tvClickable(onPressedChange = { pressed = it }, onClick = onClick)
                 .graphicsLayer {
                     scaleX = scale
                     scaleY = scale

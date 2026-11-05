@@ -284,19 +284,20 @@ private const val FOLDER_ROWS = 2
 private fun SettingsTile(onClick: () -> Unit, modifier: Modifier, tileModifier: Modifier) {
     val context = LocalContext.current
     val art = remember { settingsArt(context) }
-    AppTile(label = "Settings", art = art, onClick = onClick, modifier = modifier, tileModifier = tileModifier, translucent = true)
+    AppTile(label = "Settings", art = art, onClick = onClick, modifier = modifier, tileModifier = tileModifier)
 }
 
-/** A gear on a pane of tinted glass, at the same size as app tile art. */
+/** A dark gear on brushed silver, as tvOS's Settings icon is, at the same size as app tile art. */
 private fun settingsArt(context: Context): ImageBitmap {
     val bitmap = Bitmap.createBitmap(SETTINGS_ART_WIDTH, SETTINGS_ART_HEIGHT, Bitmap.Config.ARGB_8888)
     val canvas = Canvas(bitmap)
     val paint = Paint().apply {
-        shader = LinearGradient(0f, 0f, 0f, SETTINGS_ART_HEIGHT.toFloat(), 0x66FFFFFF, 0x26FFFFFF, Shader.TileMode.CLAMP)
+        shader = LinearGradient(0f, 0f, 0f, SETTINGS_ART_HEIGHT.toFloat(), 0xFFDADADF.toInt(), 0xFF9C9CA3.toInt(), Shader.TileMode.CLAMP)
     }
     canvas.drawRect(0f, 0f, SETTINGS_ART_WIDTH.toFloat(), SETTINGS_ART_HEIGHT.toFloat(), paint)
-    val gear = checkNotNull(ContextCompat.getDrawable(context, R.drawable.ic_settings_gear))
-    val size = SETTINGS_ART_HEIGHT / 2
+    val gear = checkNotNull(ContextCompat.getDrawable(context, R.drawable.ic_settings_gear)).mutate()
+    gear.setTint(0xFF5A5A61.toInt())
+    val size = SETTINGS_ART_HEIGHT * 5 / 8
     val left = (SETTINGS_ART_WIDTH - size) / 2
     val top = (SETTINGS_ART_HEIGHT - size) / 2
     gear.setBounds(left, top, left + size, top + size)
