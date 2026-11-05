@@ -8,9 +8,9 @@ Atrium replaces the Google TV home screen with one modelled on Apple TV's, inclu
 
 ## The home screen
 
-Move along the top row and the screen fills with artwork from that app, with nothing else on it. A small arrow shows there's more above, and the tops of the row below peek in at the bottom edge.
+Move along the top row and the screen fills with artwork from that app, with nothing else on it. A small arrow and "Press Up for full screen" show there's more above, and the tops of the row below peek in at the bottom edge.
 
-Press **Up** and the picture opens to full screen, with **Play** and page dots. **Left** and **Right** change program, and it moves on by itself after a while.
+Press **Up** and the picture opens to full screen, with **Play** (or **Resume** if you've started it), and **More Info** when the app wrote a description. **Left** and **Right** change program, and it moves on by itself after a while, with the current page dot filling up to show when. Leave the remote alone for about 20 seconds on an app with sharp artwork and the top row and clock slide away, and the screen moves slowly through what the app features until the screen saver takes over. Softer artwork, which many apps publish, keeps the top row over it. Any button brings the top row back.
 
 | At rest | Press Up |
 |---|---|
@@ -32,15 +32,19 @@ Don't want something there? Hold **Select** on it to remove it. It comes back on
 
 ## All your apps
 
-Everything else sits in a grid below, using Apple's six-column layout, over a frosted copy of the artwork. Hold **Select** on an app to rearrange it, move it to the top row, put it in a folder, hide it or delete it.
+Everything else sits in a grid below, using Apple's six-column layout, over a soft, dark wash of the artwork's colors. Hold **Select** on an app to rearrange it, move it to the top row, put it in a folder, hide it or delete it.
 
 ![The grid of apps, with one selected and its name underneath](docs/images/app-grid.jpg)
 
+Held on a tile in the top row, the menu opens just above it, so the row stays in view.
+
+![The menu for an app, opening above the Apple TV tile, with Edit Home Screen selected](docs/images/app-menu.jpg)
+
 ## Control Center
 
-Press **Up** to reach the clock and then **Select**, or just hold **Home**. Glass tiles float over whatever's on screen, with Sleep, Wi-Fi, Screen Saver, Sound, a Sleep Timer, Settings, Search and more. Sound, Wi-Fi and the Sleep Timer open their own glass panels. When music or a podcast is playing or paused in any app that shares it, like Spotify, it shows on top with its timeline and controls, as Apple's Now Playing does, and selecting the song opens that app. Small icons by the clock show when there's no internet, a Sleep Timer is running, something is playing, or headphones are connected.
+Hold **Home**, or press **Up** to reach the clock and then **Select**. Glass tiles float over whatever's on screen, with Sleep, Wi-Fi, Screen Saver, Sound, a Sleep Timer, Search and Accessibility. Sound, Wi-Fi and the Sleep Timer open their own glass panels. Tabs along the top work as on Apple TV: **Left** and **Right** move between them, and when music or a podcast is playing or paused in any app that shares it, like Spotify, a Now Playing tab appears with its timeline and controls, and selecting the song opens that app. Small icons by the clock show when there's no internet, a Sleep Timer is running, something is playing, or headphones are connected.
 
-![Control Center over Ghosted artwork](docs/images/control-center.jpg)
+![Control Center over Slow Horses artwork, with the time and tabs along the top](docs/images/control-center.jpg)
 
 ## Screen saver
 
@@ -52,7 +56,7 @@ After a few idle minutes, or when you press **Back** on the first app in the top
 
 ## Settings
 
-A plain list like Apple TV's, explaining each row as you reach it. Choose a wallpaper from seven gradients or your own photos, and control the clock, screen saver, click sounds and hidden apps.
+Organized like Apple TV's: a short list of topics, each opening its own page, with a large picture and an explanation beside the row you're on. Choose a wallpaper from seven gradients or your own photos, and control the clock, screen saver, click sounds and hidden apps.
 
 ![The Settings screen with Wallpaper selected](docs/images/settings.jpg)
 
