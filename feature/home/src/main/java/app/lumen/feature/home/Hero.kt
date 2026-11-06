@@ -209,7 +209,12 @@ internal fun Backdrop(
             val baked = picture?.let { bakeArtwork(it, hasText = program != null && programHasText) } ?: bakeBackdrop(preset, glow ?: art)
             // A transparent bake has nothing to frost by itself; glass falls back to the wallpaper's frost.
             val opaque = baked.takeUnless { it.hasAlpha() }
-            Triple(baked.asImageBitmap(), opaque?.clearFrosted()?.asImageBitmap(), opaque?.backgroundFrosted()?.asImageBitmap())
+            val clear = opaque?.clearFrosted()
+            val background = opaque?.backgroundFrosted()
+            // Starts handing the pictures to the graphics chip now, rather than on the frame that first shows
+            // them, which a full-screen picture would hold up for several milliseconds.
+            listOfNotNull(baked, clear, background).forEach(Bitmap::prepareToDraw)
+            Triple(baked.asImageBitmap(), clear?.asImageBitmap(), background?.asImageBitmap())
         }
         val opaque = !next.hasAlpha
         coversWallpaper = coversWallpaper && opaque
