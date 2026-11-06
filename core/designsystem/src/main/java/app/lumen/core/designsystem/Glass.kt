@@ -39,6 +39,13 @@ import androidx.compose.ui.graphics.ShaderBrush
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.compositeOver
+import androidx.compose.ui.graphics.layer.CompositingStrategy
+import androidx.compose.ui.graphics.drawscope.translate
+import androidx.compose.ui.graphics.layer.drawLayer
+import androidx.compose.ui.graphics.rememberGraphicsLayer
+import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.IntOffset
+import kotlin.math.roundToInt
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.layout.findRootCoordinates
@@ -90,12 +97,19 @@ val LocalLiveFrost = staticCompositionLocalOf<LiveFrost?> { null }
  * A floating sheet of glass behind this element's content. Draws outside its bounds for its shadow.
  * With [clear], it's tvOS's clear glass for controls that carry pictures: what's behind stays bright
  * and the edge nearly disappears, with no shadow. Text on it wouldn't stay readable.
+ *
+ * The glass is drawn once into a layer of its own and reused from there, being drawn again only when
+ * what it shows changes: its size or place, the frost behind it, or a fade between two frosts. The
+ * Chromecast repaints the whole screen on every frame of any animation, and drawing all of the glass
+ * afresh each time held a move along the top row to about 40 frames a second. The content stays out
+ * of the layer, so text on glass that grows with focus is drawn sharp at its new size.
  */
 fun Modifier.liquidGlass(corner: Dp, tint: Color = LumenColors.GlassTint, clear: Boolean = false): Modifier = composed {
     val fixedBackdrop = LocalGlassBackdrop.current
     val liveFrost = LocalLiveFrost.current
     var origin by remember { mutableStateOf(Offset.Zero) }
     var window by remember { mutableStateOf(IntSize.Zero) }
+    val layer = rememberGraphicsLayer()
 
     this
         .onGloballyPositioned {
@@ -117,35 +131,29 @@ fun Modifier.liquidGlass(corner: Dp, tint: Color = LumenColors.GlassTint, clear:
                 1f to Color.White.copy(alpha = 0.07f).compositeOver(tint),
             )
             val corners = CornerRadius(radius)
-            // A shader inside a rounded rect rather than a bitmap inside a rounded clip, which would
-            // have the GPU build a mask for the glass on every frame.
-            val brushes = HashMap<ImageBitmap, ShaderBrush>(2)
-            var brushOrigin = origin
+            // Room in the layer around the glass for its shadow.
+            val margin = if (clear) 0f else SHADOW_STEP.toPx() * SHADOW_RINGS
+            val glassSize = size
+            layer.compositingStrategy = CompositingStrategy.Offscreen
+            layer.topLeft = IntOffset(-margin.roundToInt(), -margin.roundToInt())
+            // What the layer was last drawn with, so it's drawn again only when one of these changes.
+            var drawnFor: List<Any?>? = null
+
             /** [image] sliced for this glass, where there are no shaders to bend it. */
             fun flatBrush(image: ImageBitmap): ShaderBrush {
-                // The glass moved, as the dock does when the home screen scrolls, so the frost has to slide under it.
-                if (brushOrigin != origin) {
-                    brushes.clear()
-                    brushOrigin = origin
-                }
-                return brushes.getOrPut(image) {
-                    val shader = BitmapShader(image.asAndroidBitmap(), Shader.TileMode.CLAMP, Shader.TileMode.CLAMP)
-                    shader.setLocalMatrix(
-                        Matrix().apply {
-                            setScale(window.width.toFloat() / image.width, window.height.toFloat() / image.height)
-                            postTranslate(-origin.x, -origin.y)
-                        },
-                    )
-                    ShaderBrush(shader)
-                }
+                val shader = BitmapShader(image.asAndroidBitmap(), Shader.TileMode.CLAMP, Shader.TileMode.CLAMP)
+                shader.setLocalMatrix(
+                    Matrix().apply {
+                        setScale(window.width.toFloat() / image.width, window.height.toFloat() / image.height)
+                        postTranslate(-origin.x, -origin.y)
+                    },
+                )
+                return ShaderBrush(shader)
             }
-            onDrawWithContent {
+
+            fun DrawScope.glass(backdrop: ImageBitmap?, previous: ImageBitmap?, fade: Float) {
                 if (!clear) drawGlassShadow(radius)
-                val live = liveFrost?.image
-                val backdrop = (live ?: fixedBackdrop)?.takeIf { window != IntSize.Zero }
                 if (backdrop != null) {
-                    val fade = if (live != null) liveFrost.fade else 1f
-                    val previous = liveFrost?.previous?.takeIf { fade < 1f }
                     // Solid underneath, so the glass doesn't turn see-through halfway.
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                         previous?.let { drawRoundRect(GlassLens.bent(it, window, origin, size, radius, bend), cornerRadius = corners) }
@@ -164,9 +172,41 @@ fun Modifier.liquidGlass(corner: Dp, tint: Color = LumenColors.GlassTint, clear:
                     drawRoundRect(GlassLens.edgeLight(size, radius, bend), cornerRadius = corners)
                 }
                 drawGlassRim(corner, strength = if (clear) CLEAR_RIM_STRENGTH else GLASS_RIM_STRENGTH)
+            }
+
+            onDrawWithContent {
+                val live = liveFrost?.image
+                val backdrop = (live ?: fixedBackdrop)?.takeIf { window != IntSize.Zero }
+                val fade = if (live != null && backdrop != null) liveFrost.fade else 1f
+                val previous = liveFrost?.previous?.takeIf { fade < 1f && backdrop != null }
+                val key = listOf(backdrop, previous, fade, origin, window)
+                if (key != drawnFor) {
+                    drawnFor = key
+                    // Its own Density: handed this scope, the recording would ask it for its density, which asks the recording.
+                    layer.record(Density(density, fontScale), layoutDirection, IntSize((glassSize.width + margin * 2).roundToInt(), (glassSize.height + margin * 2).roundToInt())) {
+                        translate(margin, margin) {
+                            // The glass's own size, not the layer's, for everything measured from its edges.
+                            withSize(glassSize) { glass(backdrop, previous, fade) }
+                        }
+                    }
+                }
+                drawLayer(layer)
                 drawContent()
             }
         }
+}
+
+/** Runs [block] with [size] standing in for this scope's size, for drawing that measures from its own edges. */
+private inline fun DrawScope.withSize(size: Size, crossinline block: DrawScope.() -> Unit) {
+    val scope = this
+    drawContext.size.let { previous ->
+        drawContext.size = size
+        try {
+            scope.block()
+        } finally {
+            drawContext.size = previous
+        }
+    }
 }
 
 /**
@@ -293,7 +333,7 @@ fun DrawScope.drawGlassRim(corner: Dp, strength: Float = 1f) {
  * smudge, so this only paints outside the outline.
  */
 private fun DrawScope.drawGlassShadow(radius: Float) {
-    val step = 3.dp.toPx()
+    val step = SHADOW_STEP.toPx()
     repeat(SHADOW_RINGS) { ring ->
         val spread = step * (ring + 0.5f)
         drawRoundRect(
@@ -307,6 +347,7 @@ private fun DrawScope.drawGlassShadow(radius: Float) {
 }
 
 private const val SHADOW_RINGS = 5
+private val SHADOW_STEP = 3.dp
 private const val SHADOW_ALPHA = 0.09f
 
 /**
