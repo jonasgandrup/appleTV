@@ -26,7 +26,6 @@ import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
@@ -42,7 +41,6 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import app.lumen.core.apps.AppInfo
 import app.lumen.core.apps.ShelfArt
-import app.lumen.core.apps.ShelfProgram
 import app.lumen.core.apps.UpNextItem
 import app.lumen.core.designsystem.LiveFrost
 import app.lumen.core.designsystem.LumenColors
@@ -64,10 +62,9 @@ import kotlinx.coroutines.withContext
 import kotlin.math.roundToInt
 
 /**
- * What sits on the stage above the dock. As on tvOS, the stage speaks for itself and the focused
- * tile already says which app it belongs to, so nothing here repeats its name: artwork's own lettering
- * says what it is, and Up opens it to full screen, where the details are. An app with only thumbnails
- * gets a row of them, like the tiles some apps choose for their Top Shelf on tvOS.
+ * What sits on the stage above the dock: the focused app's row of programs, as tvOS's Top Shelf
+ * shows a row of tiles for an app that has one. Up moves into it from the dock and Select plays. The
+ * focused tile already says which app it belongs to, so nothing here repeats its name.
  */
 @Composable
 internal fun Hero(
@@ -93,7 +90,7 @@ internal fun Hero(
             if (target != null) {
                 UpNextRow(
                     items = target.recommendations,
-                    heading = "Recommended",
+                    heading = target.heading,
                     firstTile = firstRowTile,
                     onOptions = onProgramOptions,
                     onItemFocused = onRecommendationFocused,
@@ -113,9 +110,9 @@ private const val SHELF_ROW_FOCUS_SCALE = 1.05f
 private const val SHELF_ROW_IDLE_FOCUS_SCALE = 1.07f
 
 /**
- * The [hero]'s own artwork from its TV channels, once focus has rested on it for a moment, so
- * gliding along the dock doesn't fetch and bake art for every tile passed. Art already loaded
- * shows at once. Holds the last art until the next arrives; check its package before using it.
+ * The [hero]'s own row of programs from its TV channels, once focus has rested on it for a moment, so
+ * gliding along the dock doesn't fetch tiles for every app passed. A row already loaded shows at
+ * once. Holds the last row until the next arrives; check its package before using it.
  *
  * What's shown stays until something better replaces it. Coming back from an app rereads it, and
  * again a little later, since apps can take a moment to publish what was just watched. So does a
@@ -160,10 +157,9 @@ private const val SHELF_ART_RETRY_MS = 10_000L
 private const val SHELF_ART_RECHECK_MS = 20_000L
 
 /**
- * The full-screen stage behind everything: the focused app's [shelfArt] when it publishes some,
- * otherwise the wallpaper lit in the color of its [glow] thumbnail or its own tile, plus scrims that
- * keep text legible. While
- * browsing [below] the Top Shelf it melts into a frosted copy of itself, as tvOS's does.
+ * The stage behind everything: the wallpaper lit in the color of the focused program in the app's
+ * row ([glow]), or of the app's own tile, plus scrims that keep text legible. While browsing [below]
+ * the Top Shelf it melts into a frosted copy of itself, as tvOS's does.
  *
  * All of it is baked into one small bitmap per app, off the main thread. Every extra full-screen
  * layer is another pass for the Chromecast's GPU: drawn separately, these held it to 20 fps.
@@ -175,17 +171,7 @@ private const val SHELF_ART_RECHECK_MS = 20_000L
 internal fun Backdrop(
     wallpaper: Wallpaper,
     app: AppInfo?,
-    shelfArt: ShelfArt?,
-    /** A program from the full-screen Top Shelf, which replaces [shelfArt]'s artwork. */
-    program: ShelfProgram?,
-    /** [program]'s words are on screen over it, so it needs shade for them. */
-    programHasText: Boolean,
-    /** Pictures change unhurried, with nothing else moving on screen. */
-    slowFade: Boolean,
-    loadProgram: suspend (ShelfProgram) -> Bitmap?,
-    /** Told once [program]'s picture is on its way in, so its text can arrive with it. */
-    onProgramShown: (ShelfProgram?) -> Unit,
-    /** A thumbnail whose color lights the stage, for an app with no artwork to fill it. */
+    /** A thumbnail whose color lights the stage. */
     glow: Bitmap?,
     below: Boolean,
     frost: LiveFrost,
@@ -193,26 +179,22 @@ internal fun Backdrop(
     val belowAmount by animateFloatAsState(if (below) 1f else 0f, tween(450), label = "below")
     val preset = (wallpaper as? Wallpaper.Gradient)?.preset
     val art = app?.art
-    val artwork = shelfArt?.takeIf { it.packageName == app?.packageName }
     var current by remember { mutableStateOf<ImageBitmap?>(null) }
     var previous by remember { mutableStateOf<ImageBitmap?>(null) }
     val fade = remember { Animatable(1f) }
     // True while an opaque bake hides a photo wallpaper completely, so it needn't be drawn.
     var coversWallpaper by remember { mutableStateOf(false) }
-    val fadeMs by rememberUpdatedState(if (slowFade) BACKDROP_SLOW_FADE_MS else BACKDROP_FADE_MS)
-    LaunchedEffect(preset, art, artwork, program, programHasText, glow) {
+    LaunchedEffect(preset, art, glow) {
         val first = current == null
         // Quick presses along the dock restart this effect before anything is baked or faded.
         if (!first) delay(BACKDROP_SETTLE_MS)
         val (next, nextFrost, nextBackground) = withContext(Dispatchers.Default) {
-            val picture = program?.let { loadProgram(it) } ?: artwork?.decodeBackdrop()
-            val baked = picture?.let { bakeArtwork(it, hasText = program != null && programHasText) } ?: bakeBackdrop(preset, glow ?: art)
+            val baked = bakeBackdrop(preset, glow ?: art)
             // A transparent bake has nothing to frost by itself; glass falls back to the wallpaper's frost.
             val opaque = baked.takeUnless { it.hasAlpha() }
             val clear = opaque?.clearFrosted()
             val background = opaque?.backgroundFrosted()
-            // Starts handing the pictures to the graphics chip now, rather than on the frame that first shows
-            // them, which a full-screen picture would hold up for several milliseconds.
+            // Starts handing the pictures to the graphics chip now, rather than on the frame that first shows them.
             listOfNotNull(baked, clear, background).forEach(Bitmap::prepareToDraw)
             Triple(baked.asImageBitmap(), clear?.asImageBitmap(), background?.asImageBitmap())
         }
@@ -220,14 +202,13 @@ internal fun Backdrop(
         coversWallpaper = coversWallpaper && opaque
         previous = current
         current = next
-        onProgramShown(program)
         frost.previous = frost.image
         frost.image = nextFrost
         frost.background = nextBackground
         frost.fade = if (first) 1f else 0f
         if (!first) {
             fade.snapTo(0f)
-            fade.animateTo(1f, tween(fadeMs)) { frost.fade = value }
+            fade.animateTo(1f, tween(BACKDROP_FADE_MS)) { frost.fade = value }
         }
         // One full-screen image per frame from here on.
         previous = null
@@ -253,33 +234,6 @@ internal fun Backdrop(
             },
         )
     }
-}
-
-/**
- * The app's artwork, full bleed. At rest it stays bright right down behind the dock, as on tvOS,
- * where the dock's own glass does the dimming. In full screen ([hasText]) it darkens toward the
- * bottom, with a pool of shade at the lower left, keeping the program's text and the page dots
- * readable over anything in the art. Drawn onto [bitmap] itself, which is freshly decoded for this,
- * so a full-screen bitmap is never copied. Opaque. Blocking.
- */
-private fun bakeArtwork(bitmap: Bitmap, hasText: Boolean): Bitmap {
-    val canvas = Canvas(bitmap)
-    val width = bitmap.width.toFloat()
-    val height = bitmap.height.toFloat()
-    val scrim = Paint().apply { isDither = true }
-    scrim.shader = LinearGradient(
-        0f, 0f, 0f, height,
-        if (hasText) intArrayOf(0x33000000, 0x00000000, 0x0D000000, 0x8C000000.toInt()) else intArrayOf(0x33000000, 0x00000000, 0x0D000000, 0x40000000),
-        floatArrayOf(0f, 0.25f, 0.55f, 1f),
-        Shader.TileMode.CLAMP,
-    )
-    canvas.drawRect(0f, 0f, width, height, scrim)
-    if (hasText) {
-        scrim.shader = RadialGradient(width * 0.1f, height * 0.92f, width * 0.42f, 0x8C000000.toInt(), 0x00000000, Shader.TileMode.CLAMP)
-        canvas.drawRect(0f, 0f, width, height, scrim)
-    }
-    bitmap.setHasAlpha(false)
-    return bitmap
 }
 
 /** Opaque over [preset]; transparent over a photo wallpaper when there's no preset. Blocking. */
@@ -311,8 +265,8 @@ private fun bakeBackdrop(preset: GradientPreset?, art: Bitmap?): Bitmap {
 }
 
 /**
- * Fills the stage with the app's own color: Netflix goes red, Prime Video blue. This stands in for
- * tvOS's full-screen Top Shelf art when the app publishes no channel artwork, or until it loads.
+ * Fills the stage with the color of what's focused: Netflix goes red, Prime Video blue, or the hue of
+ * the program in focus in the app's row.
  * Black and white brands have no color to offer and leave the wallpaper showing.
  */
 private fun drawAppLight(canvas: Canvas, art: Bitmap, width: Float, height: Float) {
@@ -385,5 +339,4 @@ private const val PHOTO_OVERLAY_WIDTH = 240
 private const val PHOTO_OVERLAY_HEIGHT = 135
 /** Short, as the GPU draws two full-screen images for as long as it runs. */
 private const val BACKDROP_FADE_MS = 350
-private const val BACKDROP_SLOW_FADE_MS = 1_200
 private const val BACKDROP_SETTLE_MS = 150L

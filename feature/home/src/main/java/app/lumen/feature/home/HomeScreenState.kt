@@ -20,7 +20,6 @@ import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.type
 import app.lumen.core.apps.AppInfo
-import app.lumen.core.apps.ShelfProgram
 import app.lumen.core.apps.UpNextItem
 import app.lumen.core.designsystem.LiveFrost
 import app.lumen.core.designsystem.UiSounds
@@ -38,8 +37,6 @@ internal class HomeScreenState(browsingBelow: Boolean, openFolderId: String?, va
     val focusedApp = mutableStateOf<AppInfo?>(null)
     /** Held as State and read only by the stage, like [focusedApp]. */
     val focusedRecommendation = mutableStateOf<UpNextItem?>(null)
-    /** The program whose picture the full-screen Top Shelf is showing. */
-    val shownProgram = mutableStateOf<ShelfProgram?>(null)
 
     /** Focus is below the top row, so the stage gives way to the rows under it. */
     var browsingBelow by mutableStateOf(browsingBelow)
@@ -49,14 +46,6 @@ internal class HomeScreenState(browsingBelow: Boolean, openFolderId: String?, va
     var programOptionsFor by mutableStateOf<ProgramOptions?>(null)
     var renaming by mutableStateOf<AppFolder?>(null)
     var controlCenterOpen by mutableStateOf(false)
-
-    /** Which of the app's featured programs fills the screen; null when the Top Shelf isn't full screen. */
-    var fullScreen by mutableStateOf<Int?>(null)
-    val isFullScreen: Boolean get() = fullScreen != null
-    /** What the stage has cycled to while the dock rested, which stays up when the dock comes back, so nothing jumps. */
-    var restIndex by mutableStateOf<Int?>(null)
-    /** Left alone on sharp artwork, the dock has slid away and the picture has the screen. */
-    var dockResting by mutableStateOf(false)
 
     var dockHasFocus by mutableStateOf(false)
     var continueHasFocus by mutableStateOf(false)
@@ -71,7 +60,6 @@ internal class HomeScreenState(browsingBelow: Boolean, openFolderId: String?, va
 
     val firstFocus = FocusRequester()
     val settingsFocus = FocusRequester()
-    val playFocus = FocusRequester()
     val continueFirstTile = FocusRequester()
     val recommendationsFirstTile = FocusRequester()
     private val tileFocus = mutableMapOf<String, FocusRequester>()
@@ -99,7 +87,6 @@ internal class HomeScreenState(browsingBelow: Boolean, openFolderId: String?, va
         renaming = null
         openFolderId = null
         controlCenterOpen = false
-        fullScreen = null
         browsingBelow = false
     }
 
@@ -150,17 +137,8 @@ internal class HomeScreenState(browsingBelow: Boolean, openFolderId: String?, va
         }
     }
 
-    /**
-     * The home screen's own answer to a key, ahead of Compose's focus handling; true when it's taken.
-     * [canOpenFullScreen] says the focused app features something for Up to open.
-     */
-    fun onKey(event: KeyEvent, canOpenFullScreen: Boolean, onFirstApp: Boolean, sounds: UiSounds?, drop: () -> Unit): Boolean {
-        // Any button only brings the dock back, as nothing it would act on is showing.
-        // What follows ignores a key-up whose press it didn't see, so that isn't taken here.
-        if (dockResting && event.type == KeyEventType.KeyDown) {
-            dockResting = false
-            return true
-        }
+    /** The home screen's own answer to a key, ahead of Compose's focus handling; true when it's taken. */
+    fun onKey(event: KeyEvent, onFirstApp: Boolean, sounds: UiSounds?, drop: () -> Unit): Boolean {
         // Taken here, ahead of Compose, which would otherwise treat Back as a focus move of its own and
         // send focus somewhere unexpected. Acts on a press that began here, not on the release of one
         // that closed an app or a menu.
@@ -170,15 +148,6 @@ internal class HomeScreenState(browsingBelow: Boolean, openFolderId: String?, va
                 backPressed = false
                 back(onFirstApp, drop)
             }
-            return true
-        }
-        // Up from the dock opens what's on the stage to full screen, as on tvOS. Apps with nothing to open let focus move on as usual.
-        if (event.key == Key.DirectionUp && event.type == KeyEventType.KeyDown && !editor.editing && !isFullScreen &&
-            canOpenFullScreen && dockHasFocus
-        ) {
-            fullScreen = restIndex ?: 0
-            restIndex = null
-            sounds?.move()
             return true
         }
         // In Edit Home Screen the D-pad moves the lifted app rather than focus, and Select drops it.

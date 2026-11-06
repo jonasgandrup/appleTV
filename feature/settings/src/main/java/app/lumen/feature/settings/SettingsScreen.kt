@@ -307,7 +307,7 @@ private fun SettingsRow(
 @Composable
 private fun MainPage(rows: SettingsRows, onOpen: (SettingsPage, String) -> Unit) {
     val topics = listOf(
-        SettingsPage.Appearance to "Wallpaper, Top Shelf artwork, the clock and your name.",
+        SettingsPage.Appearance to "Wallpaper, the Top Shelf, the clock and your name.",
         SettingsPage.ScreenSaver to "Scenes or your own photos, and when they start.",
         SettingsPage.Apps to "Phone apps, and apps you've hidden.",
         SettingsPage.Sound to "Click sounds, and Now Playing in Control Center.",
@@ -362,8 +362,8 @@ private fun AppearancePage(rows: SettingsRows, settings: LauncherSettings, viewM
             SettingsRow(
                 rows,
                 initial,
-                title = "Top Shelf Artwork",
-                hint = "Fill the screen with artwork from the focused app, or its colors when it has none.",
+                title = "Top Shelf",
+                hint = "Show the focused app's programs above the top row, lit in their colors.",
                 value = onOff(settings.ambientBackdrop),
                 onClick = { viewModel.setAmbientBackdrop(!settings.ambientBackdrop) },
             )

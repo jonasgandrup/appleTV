@@ -12,7 +12,6 @@ import app.lumen.core.apps.AppInfo
 import app.lumen.core.apps.AppLauncher
 import app.lumen.core.apps.AppRepository
 import app.lumen.core.apps.ShelfArt
-import app.lumen.core.apps.ShelfProgram
 import app.lumen.core.apps.TopShelfRepository
 import app.lumen.core.apps.UpNextItem
 import app.lumen.core.designsystem.LumenDimens
@@ -115,9 +114,6 @@ class HomeViewModel(
     suspend fun refreshShelfArt(app: AppInfo): ShelfArt? = topShelf.refresh(app.packageName)
     fun shelfArtIncomplete(app: AppInfo): Boolean = topShelf.isIncomplete(app.packageName)
     fun expireShelfArt() = topShelf.expireAll()
-    suspend fun programBackdrop(program: ShelfProgram): Bitmap? = topShelf.backdrop(program)
-    suspend fun preloadProgram(program: ShelfProgram) = topShelf.preloadBackdrop(program)
-    suspend fun programIsSharp(program: ShelfProgram): Boolean = topShelf.isSharp(program)
 
     private val continuing = MutableStateFlow<List<UpNextItem>>(emptyList())
     /** What the user is in the middle of across all their apps, most recently watched first. */

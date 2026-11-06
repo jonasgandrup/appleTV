@@ -14,9 +14,7 @@ import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import app.lumen.core.apps.AppInfo
-import app.lumen.core.apps.ShelfProgram
 import app.lumen.core.apps.UpNextItem
-import app.lumen.core.designsystem.LocalFocusIdle
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -28,10 +26,6 @@ import kotlinx.coroutines.flow.map
 
 private const val CONTINUE_RECHECK_MS = 20_000L
 private const val SETTLE_TIMEOUT_MS = 1_000L
-/** How long after [LocalFocusIdle] begins that the dock slides away: about 20 seconds without a key in all. */
-private const val DOCK_REST_MS = 13_000L
-/** How long each picture stays up while the dock rests: longer than in full screen, as nothing's asking to be read. */
-private const val REST_CYCLE_MS = 12_000L
 internal const val SETTINGS_FOCUS_KEY = "settings"
 
 /** Rereads Continue Watching on coming back from an app, and again a little later, since apps can take a moment to publish what was just watched. */
@@ -66,7 +60,6 @@ internal fun HomeFocusEffects(
     continueWatching: List<UpNextItem>,
     homePresses: Flow<Unit>,
     controlCenterRequests: MutableSharedFlow<Unit>,
-    hero: State<AppInfo?>,
     drop: () -> Unit,
 ) {
     // If the last program goes while focus is on it, focus needs somewhere to land.
@@ -143,13 +136,6 @@ internal fun HomeFocusEffects(
         }
     }
 
-    // Focus moves to Play as soon as the full-screen Top Shelf exists.
-    LaunchedEffect(ui.isFullScreen) {
-        if (!ui.isFullScreen) return@LaunchedEffect
-        withFrameNanos { }
-        runCatching { ui.playFocus.requestFocus() }
-    }
-
     LaunchedEffect(ui.browsingBelow) {
         if (ui.browsingBelow) return@LaunchedEffect
         // In step with the rows sliding down, where it can be: a scroll of its own pace would have the dock overshoot and settle.
@@ -163,37 +149,5 @@ internal fun HomeFocusEffects(
             DockFocus.LastApp -> ui.focusDock()
         }
     }
-
-    // A program cycled to while resting belongs to that app only.
-    LaunchedEffect(Unit) {
-        snapshotFlow { hero.value?.packageName }.drop(1).collect { ui.restIndex = null }
-    }
 }
 
-/**
- * The dock slides away once a Top Shelf has been left alone, as it does on tvOS: a little after the
- * remote goes quiet and only while [allowed]. The screen saver and every key end [LocalFocusIdle],
- * which ends this too. Left resting, the stage then moves through what the app features, as Apple's
- * previews do, passing over anything too soft to show alone, until the screen saver takes over.
- */
-@Composable
-internal fun DockRest(ui: HomeScreenState, allowed: Boolean, featured: List<ShelfProgram>, isSharp: suspend (ShelfProgram) -> Boolean) {
-    val idle = LocalFocusIdle.current
-    LaunchedEffect(idle, allowed) {
-        ui.dockResting = false
-        if (!idle || !allowed) return@LaunchedEffect
-        delay(DOCK_REST_MS)
-        ui.dockResting = true
-    }
-    LaunchedEffect(ui.dockResting, featured) {
-        if (!ui.dockResting || featured.size < 2) return@LaunchedEffect
-        while (true) {
-            delay(REST_CYCLE_MS)
-            val current = ui.restIndex ?: 0
-            ui.restIndex = (1 until featured.size)
-                .map { (current + it) % featured.size }
-                .firstOrNull { isSharp(featured[it]) }
-                ?: current
-        }
-    }
-}

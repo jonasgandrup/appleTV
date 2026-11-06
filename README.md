@@ -2,23 +2,19 @@
 
 **An Apple TV style home screen for Chromecast with Google TV.**
 
-Atrium replaces the Google TV home screen with one modelled on Apple TV's, including its Liquid Glass look. You get full-screen artwork, a top row of your six favorite apps, and Continue Watching across your apps, without Google TV's ads and suggested rows. Your apps stay exactly as they are.
+Atrium replaces the Google TV home screen with one modelled on Apple TV's, including its Liquid Glass look. You get a top row of your six favorite apps, each showing what's next in it, and Continue Watching across your apps, without Google TV's ads and suggested rows. Your apps stay exactly as they are.
 
-![The Atrium home screen, with Slow Horses artwork above a glass row of apps](docs/images/home.jpg)
+![The Atrium home screen, with Apple TV's Up Next row above a glass row of apps](docs/images/home.jpg)
 
 ## The home screen
 
-Move along the top row and the screen fills with artwork from that app, with nothing else on it. A small arrow and "Press Up for full screen" show there's more above, and the tops of the row below peek in at the bottom edge.
+Move along the top row and each app shows its own row above it, as Apple TV's Top Shelf does: what you're in the middle of in that app, labelled **Up Next**, then what it recommends. The screen takes on the color of the program in focus, and the tops of the row below peek in at the bottom edge.
 
-Press **Up** and the picture opens to full screen, with **Play** (or **Resume** if you've started it), and **More Info** when the app wrote a description. **Left** and **Right** change program, and it moves on by itself after a while, with the current page dot filling up to show when. Leave the remote alone for about 20 seconds on an app with sharp artwork and the top row and clock slide away, and the screen moves slowly through what the app features until the screen saver takes over. Softer artwork, which many apps publish, keeps the top row over it. Any button brings the top row back.
+Press **Up** to move into the row. The program in focus shows its title and where you are, or how long it is, and **Select** plays it.
 
-| At rest | Press Up |
+| The top row | In an app's row |
 |---|---|
-| ![Artwork above the top row of apps](docs/images/home.jpg) | ![The same picture opened to full screen with a Play button](docs/images/full-screen-opened.jpg) |
-
-![Drops of God in full screen, with its title and a Play button](docs/images/full-screen.jpg)
-
-Apps with no artwork light the screen in their own color instead. Apps that only share small thumbnails, like YouTube, show a row of large tiles above the top row, so nothing gets stretched and blurry, and the screen takes on the color of the selected thumbnail.
+| ![Apple TV's Up Next row above the top row of apps](docs/images/home.jpg) | ![Slow Horses selected in the row, with its episode and time left underneath](docs/images/shelf-row.jpg) |
 
 ## Continue Watching
 
@@ -32,7 +28,7 @@ Don't want something there? Hold **Select** on it to remove it. It comes back on
 
 ## All your apps
 
-Everything else sits in a grid below, using Apple's six-column layout, over a soft, dark wash of the artwork's colors. Hold **Select** on an app to rearrange it, move it to the top row, put it in a folder, hide it or delete it.
+Everything else sits in a grid below, using Apple's six-column layout, over a soft, dark wash of the stage's colors. Hold **Select** on an app to rearrange it, move it to the top row, put it in a folder, hide it or delete it.
 
 ![The grid of apps, with one selected and its name underneath](docs/images/app-grid.jpg)
 
@@ -44,7 +40,7 @@ Held on a tile in the top row, the menu opens just above it, so the row stays in
 
 Hold **Home**, or press **Up** to reach the clock and then **Select**. Glass tiles float over whatever's on screen, with Sleep, Wi-Fi, Screen Saver, Sound, a Sleep Timer, Search and Accessibility. Sound, Wi-Fi and the Sleep Timer open their own glass panels. Tabs along the top work as on Apple TV: **Left** and **Right** move between them, and when music or a podcast is playing or paused in any app that shares it, like Spotify, a Now Playing tab appears with its timeline and controls, and selecting the song opens that app. Small icons by the clock show when there's no internet, a Sleep Timer is running, something is playing, or headphones are connected.
 
-![Control Center over Slow Horses artwork, with the time and tabs along the top](docs/images/control-center.jpg)
+![Control Center over the home screen, with the time and tabs along the top](docs/images/control-center.jpg)
 
 ## Screen saver
 
@@ -66,7 +62,7 @@ Organized like Apple TV's: a short list of topics, each opening its own page, wi
 |---|---|
 | **Select** | Open what's selected |
 | **Hold Select** | Show options for that app or program |
-| **Up** on the top row | Open the artwork to full screen |
+| **Up** on the top row | Move into that app's row of programs |
 | **Down** from the top row | Go to Continue Watching and your apps |
 | **Back** | Return to the top row, then start the screen saver from the first app |
 | **Home** | Go to Atrium, or back to the first app if you're already there |
@@ -77,7 +73,7 @@ The two **Home** actions need the optional Home Button service. Without it, Home
 ## Good to know
 
 - **Devices:** it's been tested on a Chromecast with Google TV (2020) running Android 14. It only runs on Android TV and Google TV devices, and other models are untested.
-- **Artwork:** pictures and programs come from what each app shares, so quality varies from app to app.
+- **Apps' rows:** the programs come from what each app shares with Google TV, so some show more than others. Netflix, for example, shares only what you're watching.
 - **Home button:** Google TV can't change its default home screen, so Atrium brings itself to the front instead. You may see a brief flash of Google TV, especially when the TV wakes up.
 - **Glass:** it's a lookalike built for the Chromecast's modest graphics chip, not Apple's real-time Liquid Glass.
 - **Sleep:** Sleep and the Sleep Timer need the Home Button service.

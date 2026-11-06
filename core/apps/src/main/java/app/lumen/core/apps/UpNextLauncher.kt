@@ -15,10 +15,6 @@ import java.net.URISyntaxException
 fun openUpNext(context: Context, item: UpNextItem, options: Bundle? = null): Boolean =
     openProgram(context, item.packageName, item.intentUri, options)
 
-/** Opens [program] the same way as [openUpNext]. */
-fun openFeatured(context: Context, program: ShelfProgram, options: Bundle? = null): Boolean =
-    openProgram(context, program.packageName, program.intentUri, options)
-
 private fun openProgram(context: Context, packageName: String, intentUri: String?, options: Bundle?): Boolean {
     val deepLink = intentUri?.let { uri ->
         try {

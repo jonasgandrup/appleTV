@@ -3,17 +3,12 @@ package app.lumen.feature.home
 import androidx.compose.runtime.getValue
 import android.graphics.Bitmap
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.BoxWithConstraints
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -32,26 +27,18 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.onFocusChanged
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.ImageBitmap
-import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
-import androidx.compose.ui.layout.layout
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.lumen.core.apps.AppInfo
 import app.lumen.core.apps.ShelfArt
-import app.lumen.core.apps.ShelfProgram
 import app.lumen.core.apps.UpNextItem
 import app.lumen.core.designsystem.LiveFrost
 import app.lumen.core.designsystem.LocalGlassBackdrop
@@ -77,10 +64,6 @@ private val ContinuePeekLift = 15.dp
 private val ContinueBrowseDrop = 10.dp
 private const val CONTINUE_KEY = "continue"
 private const val GRID_KEY = "grid"
-/** Longer than the dock takes to settle after coming back from below, or from full screen. */
-private const val UP_HINT_DELAY_MS = 600
-private const val UP_HINT_FADE_MS = 300
-private const val UP_HINT_LEAVE_MS = 80
 
 /** How much of the item with [key] is inside the viewport, 0..1. Read it in a draw or layer block to stay out of composition. */
 private fun LazyListState.visibleFraction(key: Any): Float {
@@ -126,10 +109,6 @@ fun HomeScreen(
             (ui.focusedRecommendation.value?.takeIf { it in items } ?: items.firstOrNull())?.thumbnail
         }
     }
-    // What the focused app features, for the full-screen Top Shelf.
-    val featured by remember { derivedStateOf { heroArt.value?.featured.orEmpty() } }
-    val stageIsSharp by remember { derivedStateOf { heroArt.value?.isSharp == true } }
-    val stageProgram = remember { derivedStateOf { (ui.fullScreen ?: ui.restIndex)?.let { featured.getOrNull(it) } } }
 
     // While an app is being moved, the editor's arrangement shows instead of the saved one.
     val dock = if (editor.active) editor.dock.filterIsInstance<HomeItem.App>().map { it.app } else state.favorites
@@ -198,7 +177,6 @@ fun HomeScreen(
         continueWatching = continueWatching,
         homePresses = homePresses,
         controlCenterRequests = controlCenterRequests,
-        hero = hero,
         drop = ::dropLifted,
     )
 
@@ -217,22 +195,12 @@ fun HomeScreen(
             LocalGlassBackdrop provides rememberFrostedWallpaper(state.settings.wallpaper),
             LocalLiveFrost provides ui.liveFrost,
         ) {
-            // Left alone on sharp artwork, the dock slides away and the picture has the screen. Soft art, which most
-            // apps publish, looks its worst alone, so the dock stays over it.
-            DockRest(
-                ui = ui,
-                allowed = featured.isNotEmpty() && stageIsSharp && ui.dockHasFocus && !ui.browsingBelow && !ui.isFullScreen &&
-                    !editor.active && !ui.overlayOpen,
-                featured = featured,
-                isSharp = viewModel::programIsSharp,
-            )
             BoxWithConstraints(
                 Modifier
                     .fillMaxSize()
                     .onPreviewKeyEvent { event ->
                         ui.onKey(
                             event,
-                            canOpenFullScreen = featured.isNotEmpty(),
                             onFirstApp = hero.value?.packageName == state.favorites.firstOrNull()?.packageName,
                             sounds = sounds,
                             drop = ::dropLifted,
@@ -247,27 +215,18 @@ fun HomeScreen(
 
                 StageBackdrop(
                     hero = hero,
-                    shelfArt = shelfArt,
                     wallpaper = state.settings.wallpaper,
                     ambient = state.settings.ambientBackdrop,
-                    program = stageProgram,
-                    programHasText = ui.isFullScreen,
-                    slowFade = ui.dockResting,
-                    loadProgram = viewModel::programBackdrop,
-                    onProgramShown = { ui.shownProgram.value = it },
                     glow = stageGlow,
                     below = ui.browsingBelow,
                     frost = ui.liveFrost,
                 )
 
-                // The dock and grid slide off for the full-screen Top Shelf, staying in place for focus to come back to.
-                val slidOff by animateFloatAsState(if (ui.isFullScreen || ui.dockResting) 1f else 0f, tween(450, easing = FastOutSlowInEasing), label = "slidOff")
-                val clockFade by animateFloatAsState(if (ui.dockResting) 0f else 1f, tween(450), label = "clockFade")
                 Box(Modifier.fillMaxSize()) {
                     StageTitle(
                         hero = hero,
                         shelfArt = shelfArt,
-                        visible = !ui.browsingBelow && !editor.editing && !ui.isFullScreen,
+                        visible = !ui.browsingBelow && !editor.editing,
                         firstRowTile = ui.recommendationsFirstTile,
                         onProgramOptions = { item, bounds -> ui.programOptionsFor = ProgramOptions(item, bounds, removable = false) },
                         onRecommendationFocused = { ui.focusedRecommendation.value = it },
@@ -278,10 +237,7 @@ fun HomeScreen(
                         state = ui.listState,
                         modifier = Modifier
                             .fillMaxSize()
-                            .graphicsLayer {
-                                translationY = (1f - below.value) * stageHeight.toPx() + slidOff * size.height
-                                alpha = 1f - slidOff
-                            },
+                            .graphicsLayer { translationY = (1f - below.value) * stageHeight.toPx() },
                         // Scrolling up to the screen's edge rather than clipping short of it.
                         contentPadding = PaddingValues(top = LumenDimens.SafeVertical, bottom = 48.dp),
                     ) {
@@ -297,10 +253,7 @@ fun HomeScreen(
                                     modifier = Modifier
                                         .onFocusChanged {
                                             ui.dockHasFocus = it.hasFocus
-                                            if (it.hasFocus) {
-                                                ui.browsingBelow = false
-                                                ui.fullScreen = null
-                                            }
+                                            if (it.hasFocus) ui.browsingBelow = false
                                         }
                                         // Fades as it scrolls under the top edge, rather than leaving a strip of empty glass there.
                                         .graphicsLayer { alpha = ui.listState.visibleFraction(SHELF_KEY).let { ((it - 0.45f) / 0.35f).coerceIn(0f, 1f) } },
@@ -343,28 +296,6 @@ fun HomeScreen(
                     }
                 }
 
-                if (ui.isFullScreen && featured.isNotEmpty()) {
-                    FullScreenShelf(
-                        programs = featured,
-                        index = (ui.fullScreen ?: 0).coerceAtMost(featured.lastIndex),
-                        shown = ui.shownProgram.value,
-                        onIndex = { ui.fullScreen = it },
-                        playFocus = ui.playFocus,
-                        preload = viewModel::preloadProgram,
-                        paused = ui.controlCenterOpen,
-                    )
-                }
-
-                // Sits where the dock ends up, so it waits for the dock to get there: focus arrives well before it does, coming up from below.
-                AnimatedVisibility(
-                    visible = featured.isNotEmpty() && ui.dockHasFocus && !ui.browsingBelow && !ui.isFullScreen && !ui.dockResting && !editor.editing,
-                    enter = fadeIn(tween(UP_HINT_FADE_MS, delayMillis = UP_HINT_DELAY_MS)),
-                    exit = fadeOut(tween(UP_HINT_LEAVE_MS)),
-                    modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = ShelfAreaHeight + 5.dp),
-                ) {
-                    UpHint(Modifier)
-                }
-
                 // The top-right corner, on the stage only: the clock opens Control Center. Settings is a tile at the grid's end, as on tvOS.
                 if (state.settings.showClock) {
                     AnimatedVisibility(
@@ -375,7 +306,7 @@ fun HomeScreen(
                             .align(Alignment.TopEnd)
                             .padding(top = LumenDimens.SafeVertical, end = LumenDimens.SafeHorizontal)
                             // Control Center shows the time in this same spot. Kept in place, so focus can come back to it.
-                            .graphicsLayer { alpha = if (ui.controlCenterOpen) 0f else clockFade },
+                            .graphicsLayer { alpha = if (ui.controlCenterOpen) 0f else 1f },
                     ) {
                         HomeClock(device, state.settings.profileName, profilePicture, onClick = { ui.controlCenterOpen = true })
                     }
@@ -404,14 +335,8 @@ fun HomeScreen(
 @Composable
 private fun StageBackdrop(
     hero: State<AppInfo?>,
-    shelfArt: State<ShelfArt?>,
     wallpaper: Wallpaper,
     ambient: Boolean,
-    program: State<ShelfProgram?>,
-    programHasText: Boolean,
-    slowFade: Boolean,
-    loadProgram: suspend (ShelfProgram) -> Bitmap?,
-    onProgramShown: (ShelfProgram?) -> Unit,
     glow: State<Bitmap?>,
     below: Boolean,
     frost: LiveFrost,
@@ -419,42 +344,11 @@ private fun StageBackdrop(
     Backdrop(
         wallpaper = wallpaper,
         app = hero.value.takeIf { ambient },
-        shelfArt = shelfArt.value,
-        program = program.value,
-        programHasText = programHasText,
-        slowFade = slowFade,
-        loadProgram = loadProgram,
-        onProgramShown = onProgramShown,
         glow = glow.value,
         below = below,
         frost = frost,
     )
 }
-
-/** tvOS's small arrow and words above the dock, saying there's more above. A shade under them keeps them visible on bright art. */
-@Composable
-private fun UpHint(modifier: Modifier) {
-    Column(modifier, horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(3.dp)) {
-        Canvas(Modifier.size(width = 24.dp, height = 8.dp)) {
-            val stroke = 2.5.dp.toPx()
-            val top = Offset(size.width / 2, stroke / 2)
-            val left = Offset(stroke / 2, size.height - stroke / 2)
-            val right = Offset(size.width - stroke / 2, size.height - stroke / 2)
-            val shade = Offset(0f, 1.dp.toPx())
-            drawLine(Color.Black.copy(alpha = 0.4f), left + shade, top + shade, stroke, StrokeCap.Round)
-            drawLine(Color.Black.copy(alpha = 0.4f), top + shade, right + shade, stroke, StrokeCap.Round)
-            drawLine(Color.White.copy(alpha = 0.85f), left, top, stroke, StrokeCap.Round)
-            drawLine(Color.White.copy(alpha = 0.85f), top, right, stroke, StrokeCap.Round)
-        }
-        LumenText("Press Up for full screen", UpHintText, color = Color.White.copy(alpha = 0.85f), maxLines = 1)
-    }
-}
-
-private val UpHintText = LumenType.Caption.copy(
-    fontSize = 10.5.sp,
-    lineHeight = 13.sp,
-    shadow = Shadow(Color.Black.copy(alpha = 0.6f), blurRadius = 6f),
-)
 
 @Composable
 private fun StageTitle(

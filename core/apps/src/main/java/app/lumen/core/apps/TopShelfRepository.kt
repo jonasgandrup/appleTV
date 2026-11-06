@@ -8,7 +8,6 @@ import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.RectF
-import android.media.tv.TvContract
 import android.media.tv.TvContract.PreviewPrograms
 import android.media.tv.TvContract.WatchNextPrograms
 import android.net.Uri
@@ -26,37 +25,18 @@ import java.net.HttpURLConnection
 import java.net.URL
 import java.util.concurrent.ConcurrentHashMap
 
-/** What an app publishes for the stage behind the dock: artwork, and what to watch next. */
+/**
+ * What an app shows above the top row, as a Top Shelf's row of tiles does on tvOS: what the user is in
+ * the middle of in it, then what it recommends.
+ */
 class ShelfArt(
     val packageName: String,
-    /**
-     * The stage artwork, still compressed. A full-screen bitmap is 8 MB, too much to keep for every
-     * app in the dock, so it's decoded only when shown, with [decodeBackdrop]. Null when there's
-     * none worth filling the screen with.
-     */
-    private val backdrop: ByteArray?,
-    /** [backdrop] holds up with nothing else on screen to look at, which most apps' art doesn't. */
-    val isSharp: Boolean,
-    /**
-     * A row of the app's preview channels, for an app with nothing else to show. These are thumbnails
-     * made to be seen small, like YouTube's, which only look blurry and cluttered stretched across
-     * the screen. tvOS's Top Shelf has this same choice between a row of tiles and full-screen art.
-     */
     val recommendations: List<UpNextItem>,
-    /** What fills the full-screen Top Shelf, starting with what's on the stage. Empty when there's nothing to fill it with. */
-    val featured: List<ShelfProgram>,
+    /** "Up Next" when the row starts with what the user is watching, else "Recommended". */
+    val heading: String,
     /** Differs whenever anything shown here does, so a reread that changed nothing leaves the screen alone. */
     internal val signature: String,
-) {
-    /** There's artwork to fill the stage, so the picture can speak for itself. */
-    val hasBackdrop: Boolean get() = backdrop != null
-
-    /**
-     * The artwork cropped to 16:9, as wide as the source allows up to [TopShelfRepository.ART_WIDTH],
-     * mutable so the stage can draw its scrims straight onto it. Blocking; null if it won't decode.
-     */
-    fun decodeBackdrop(): Bitmap? = backdrop?.let { decodeArt(it, TopShelfRepository.ART_WIDTH, TopShelfRepository.ART_HEIGHT, upscale = false) }
-}
+)
 
 /** A program shown as a tile, in Continue Watching or in an app's recommendations. */
 class UpNextItem(
@@ -72,33 +52,13 @@ class UpNextItem(
     internal val place: String,
 )
 
-/** A program from an app's preview channels. Its artwork is fetched only if it's actually shown. */
-class ShelfProgram(
-    val packageName: String,
-    val title: String,
-    /** What the app said about it, like "S3, E4 · 23 min left" or "Drama · 2023 · 2 hr 1 min". */
-    val detail: String?,
-    /** A line or two to show on the stage. */
-    val description: String?,
-    /** The fullest description the app gave, for More Info; null when it gave none. */
-    val fullDescription: String?,
-    /** The user has started it, so selecting it picks up where they left off. */
-    val resume: Boolean,
-    internal val art: List<Uri>,
-    /** Opens the program in its app; null when the app gave none. */
-    val intentUri: String?,
-) {
-    /** The artwork, still compressed, once fetched. */
-    @Volatile
-    internal var backdrop: ByteArray? = null
-}
-
 /**
- * Reads the artwork apps publish to the system TV provider, like tvOS's Top Shelf.
+ * Reads what apps publish to the system TV provider: each app's row above the top row, like tvOS's
+ * Top Shelf, and Continue Watching across them.
  *
  * The provider normally limits a caller to its own rows, but a query from an app holding
- * READ_TV_LISTINGS also returns every other app's searchable rows. The backdrop comes from
- * Watch Next first (what the user is in the middle of), then the app's preview channels.
+ * READ_TV_LISTINGS also returns every other app's searchable rows. An app's row comes from its
+ * Watch Next first (what the user is in the middle of), then its preview channels.
  * Results, including "nothing there", are cached for a while so moving along the dock stays quick,
  * and reread when the user comes back from an app, which is when they're likely to have changed.
  * A read that fails never replaces a good result: only what the app actually published does.
@@ -215,98 +175,31 @@ class TopShelfRepository(context: Context) {
 
     /** Whether a read that came up short lost something, rather than the app having dropped it. */
     private fun ShelfArt?.isWorseThan(previous: ShelfArt): Boolean =
-        this == null || recommendations.size < previous.recommendations.size || (previous.hasBackdrop && !hasBackdrop)
-
-    /** [program]'s artwork for the stage, cropped as [ShelfArt.decodeBackdrop]'s is. Null if it can't be fetched. */
-    suspend fun backdrop(program: ShelfProgram): Bitmap? = withContext(Dispatchers.IO) {
-        fetchBackdrop(program)?.let { decodeArt(it, ART_WIDTH, ART_HEIGHT, upscale = false) }
-    }
-
-    /** Whether [program]'s artwork holds up with nothing else on screen to look at. Fetches it if need be. */
-    suspend fun isSharp(program: ShelfProgram): Boolean = withContext(Dispatchers.IO) {
-        fetchBackdrop(program)?.let { landscapeWidth(it) }?.let { it >= SHARP_WIDTH } ?: false
-    }
-
-    /** Fetches [program]'s artwork ahead of time, so its picture can arrive together with its text. */
-    suspend fun preloadBackdrop(program: ShelfProgram) {
-        withContext(Dispatchers.IO) { fetchBackdrop(program) }
-    }
-
-    private suspend fun fetchBackdrop(program: ShelfProgram): ByteArray? = program.backdrop ?: coroutineScope {
-        program.art
-            .map { uri -> async { runCatching { open(uri).use(InputStream::readBytes) }.getOrNull() } }
-            .awaitAll()
-            .filterNotNull()
-            .maxByOrNull { landscapeWidth(it) ?: 0 }
-    }?.also { program.backdrop = it }
+        this == null || recommendations.size < previous.recommendations.size
 
     private suspend fun query(packageName: String): Loaded = coroutineScope {
         val watchNext = programs(WATCH_NEXT_URI, packageName, LAST_ENGAGEMENT, MAX_UP_NEXT)
-        val preview = programs(PREVIEW_URI, packageName, WEIGHT, MAX_FEATURED)
+        val preview = programs(PREVIEW_URI, packageName, WEIGHT, MAX_ROW)
         Log.d(TAG, "$packageName publishes ${watchNext.size} Watch Next and ${preview.size} preview programs")
         // A program's poster and thumbnail can be the same image, so each is fetched once.
         val downloads = HashMap<Uri, Deferred<ByteArray?>>()
         fun download(uri: Uri) = downloads.getOrPut(uri) {
             async(Dispatchers.IO) { runCatching { open(uri).use(InputStream::readBytes) }.getOrNull() }
         }
-
-        // The stage fills the screen, so it takes the largest art among a program's poster and thumbnail.
-        // What the user is in the middle of comes first, passed over only if its art is too soft,
-        // and then the sharpest of a few programs wins.
-        var backdrop: Pair<Program, ByteArray>? = null
-        var backdropWidth = 0
-        for (program in watchNext.take(MAX_CANDIDATES) + preview.take(MAX_CANDIDATES)) {
-            val sized = program.art.map(::download).awaitAll().mapNotNull { bytes ->
-                bytes?.let { landscapeWidth(it) }?.takeIf { it >= MIN_WIDTH }?.let { bytes to it }
+        // What the user is in the middle of first, as tvOS's Up Next does, then what the app suggests.
+        val programs = (watchNext + preview).distinctBy { it.title }.take(MAX_ROW)
+        val recommendations = programs.map { program ->
+            val art = program.art.map(::download)
+            async(Dispatchers.Default) {
+                // The sharper of its poster and thumbnail, as the tile is large.
+                val bytes = art.awaitAll().filterNotNull().maxByOrNull { landscapeWidth(it) ?: 0 }
+                bytes?.let { upNextItem(packageName, program, it, large = true) }
             }
-            val (bytes, width) = sized.maxByOrNull { it.second } ?: continue
-            Log.d(TAG, "$packageName stage art ${width}px wide, from ${sized.map { it.second }} (${program.title})")
-            if (width > backdropWidth) {
-                backdrop = program to bytes
-                backdropWidth = width
-            }
-            if (width >= SHARP_WIDTH) break
-        }
-        val onlySmallArt = watchNext.isEmpty() && preview.isNotEmpty() && backdropWidth < MIN_FULL_SCREEN_WIDTH
-        val recommendations = if (onlySmallArt) {
-            preview.map { program ->
-                val art = download(program.art.first())
-                async(Dispatchers.Default) { art.await()?.let { upNextItem(packageName, program, it, large = true) } }
-            }.awaitAll().filterNotNull()
-        } else {
-            emptyList()
-        }
-        val stage = backdrop.takeUnless { onlySmallArt }
-        // Starting with what's on the stage, so going full screen feels like that picture opening up.
-        val featured = if (onlySmallArt) emptyList() else (listOfNotNull(stage?.first) + preview.ifEmpty { watchNext })
-            .distinctBy { it.title }
-            .take(MAX_FEATURED)
-            .mapNotNull { program ->
-                program.title?.takeIf(String::isNotBlank)?.let { title ->
-                    ShelfProgram(
-                        packageName,
-                        title,
-                        listOfNotNull(program.detail, program.facts).joinToString(" · ").ifEmpty { null },
-                        program.description ?: program.longDescription,
-                        program.longDescription ?: program.description,
-                        resume = program.progress != null,
-                        program.art,
-                        program.intentUri,
-                    )
-                }
-            }
+        }.awaitAll().filterNotNull()
         val complete = downloads.values.awaitAll().none { it == null }
-        val signature = buildString {
-            append(stage?.second?.contentHashCode())
-            recommendations.forEach { append('|').append(it.title).append(it.intentUri) }
-            featured.forEach { append('|').append(it.title).append(it.detail) }
-        }
-        val art = if (stage == null && recommendations.isEmpty() && featured.isEmpty()) {
-            null
-        } else {
-            ShelfArt(packageName, stage?.second, stage != null && backdropWidth >= SHARP_WIDTH, recommendations, featured, signature)
-        }
-        Loaded(art, complete)
+        val signature = recommendations.joinToString("|") { it.title + it.detail + it.intentUri }
+        val heading = if (watchNext.any { program -> recommendations.any { it.title == program.title } }) "Up Next" else "Recommended"
+        Loaded(recommendations.takeIf { it.isNotEmpty() }?.let { ShelfArt(packageName, it, heading, signature) }, complete)
     }
 
     /** The tile for [program], or null if it has no title or its art is too small to use. */
@@ -330,10 +223,6 @@ class TopShelfRepository(context: Context) {
         /** 0..1 through the program, or null if it hasn't been started. */
         val progress: Float?,
         val detail: String?,
-        val description: String?,
-        val longDescription: String?,
-        /** Its genre, year and length, leaving out whatever the app didn't say. */
-        val facts: String?,
         /** Why it's in Watch Next; null for a preview program, or when the app didn't say. */
         val watchNextType: Int?,
         val place: String,
@@ -354,7 +243,7 @@ class TopShelfRepository(context: Context) {
         val isWatchNext = base == WATCH_NEXT_URI
         val projection = arrayOf(
             TITLE, POSTER_URI, POSTER_ASPECT, THUMBNAIL_URI, THUMBNAIL_ASPECT, INTENT_URI, POSITION, DURATION,
-            SEASON, EPISODE, DESCRIPTION, LONG_DESCRIPTION, GENRE, RELEASE_DATE, rankColumn,
+            SEASON, EPISODE, rankColumn,
         ) + if (isWatchNext) arrayOf(WATCH_NEXT_TYPE) else emptyArray()
         val cursor = context.contentResolver.query(uri, projection, null, null, null) ?: return emptyList()
         return cursor.use { c ->
@@ -366,17 +255,14 @@ class TopShelfRepository(context: Context) {
                     val duration = c.longOrZero(DURATION)
                     val progress = if (position > 0 && duration > 0) (position.toFloat() / duration).coerceIn(0f, 1f) else null
                     val episode = episodeLabel(c.stringOrNull(SEASON), c.stringOrNull(EPISODE))
-                    val detail = listOfNotNull(episode, timeLeft(position, duration)).joinToString(" · ").ifEmpty { null }
-                    val description = c.stringOrNull(DESCRIPTION)?.takeIf(String::isNotBlank)
-                    val longDescription = c.stringOrNull(LONG_DESCRIPTION)?.takeIf(String::isNotBlank)
-                    // An episode's length would read as the whole show's, and a started program says what's left instead.
-                    val length = duration.takeIf { episode == null && progress == null }?.let(::lengthLabel)
-                    val facts = listOfNotNull(genreLabel(c.stringOrNull(GENRE)), yearOf(c.stringOrNull(RELEASE_DATE)), length).joinToString(" · ").ifEmpty { null }
+                    // How much is left once started, or how long it is before then.
+                    val time = timeLeft(position, duration) ?: duration.takeIf { position <= 0 }?.let(::lengthLabel)
+                    val detail = listOfNotNull(episode, time).joinToString(" · ").ifEmpty { null }
                     val type = if (isWatchNext) c.getColumnIndex(WATCH_NEXT_TYPE).takeIf { it >= 0 && !c.isNull(it) }?.let(c::getInt) else null
                     val title = c.stringOrNull(TITLE)
                     val place = "$episode@$position"
                     if (isWatchNext && removedPrograms[programKey(packageName, title)] == place) continue
-                    add(Program(title, art, c.longOrZero(rankColumn), c.stringOrNull(INTENT_URI), progress, detail, description, longDescription, facts, type, place))
+                    add(Program(title, art, c.longOrZero(rankColumn), c.stringOrNull(INTENT_URI), progress, detail, type, place))
                 }
             }.sortedByDescending { it.rank }.take(limit)
         }
@@ -406,16 +292,7 @@ class TopShelfRepository(context: Context) {
         }
     }
 
-    /** The first genre that says something, in words. "Movies" is left out: it's a kind of program, not a genre. */
-    private fun genreLabel(encoded: String?): String? {
-        val genres = encoded?.takeIf(String::isNotBlank)?.let { runCatching { TvContract.Programs.Genres.decode(it) }.getOrNull() } ?: return null
-        return genres.firstNotNullOfOrNull(GENRE_LABELS::get)
-    }
-
-    /** The year of a release date, which apps write as "2023" or "2023-05-12". */
-    private fun yearOf(date: String?): String? = date?.trim()?.take(4)?.takeIf { it.length == 4 && it.all(Char::isDigit) }
-
-    /** The poster and thumbnail, each if it's landscape. Portrait art can't fill a stage. */
+    /** The poster and thumbnail, each if it's landscape. Portrait art would be cropped to a sliver in a wide tile. */
     private fun landscapeArt(c: Cursor): List<Uri> {
         fun art(uriColumn: String, aspectColumn: String): Uri? {
             val uri = c.stringOrNull(uriColumn)?.takeIf { it.isNotBlank() } ?: return null
@@ -471,10 +348,6 @@ class TopShelfRepository(context: Context) {
         /** Not in the public SDK's Manifest.permission, but an ordinary runtime permission. */
         const val PERMISSION = "android.permission.READ_TV_LISTINGS"
 
-        /** The most the stage decodes: the UI's own 1920x1080, so art is never softer than its source. */
-        const val ART_WIDTH = 1920
-        const val ART_HEIGHT = 1080
-
         /** Up Next tiles are 16:9, unlike the dock's; this is their focused size in pixels. */
         const val THUMB_WIDTH = 448
         const val THUMB_HEIGHT = 252
@@ -496,25 +369,6 @@ class TopShelfRepository(context: Context) {
         private const val DURATION = PreviewPrograms.COLUMN_DURATION_MILLIS
         private const val SEASON = PreviewPrograms.COLUMN_SEASON_DISPLAY_NUMBER
         private const val EPISODE = PreviewPrograms.COLUMN_EPISODE_DISPLAY_NUMBER
-        private const val DESCRIPTION = PreviewPrograms.COLUMN_SHORT_DESCRIPTION
-        private const val LONG_DESCRIPTION = PreviewPrograms.COLUMN_LONG_DESCRIPTION
-        private const val GENRE = PreviewPrograms.COLUMN_CANONICAL_GENRE
-        private const val RELEASE_DATE = PreviewPrograms.COLUMN_RELEASE_DATE
-        private val GENRE_LABELS = mapOf(
-            TvContract.Programs.Genres.ANIMAL_WILDLIFE to "Nature",
-            TvContract.Programs.Genres.ARTS to "Arts",
-            TvContract.Programs.Genres.COMEDY to "Comedy",
-            TvContract.Programs.Genres.DRAMA to "Drama",
-            TvContract.Programs.Genres.EDUCATION to "Education",
-            TvContract.Programs.Genres.FAMILY_KIDS to "Kids & Family",
-            TvContract.Programs.Genres.GAMING to "Gaming",
-            TvContract.Programs.Genres.LIFE_STYLE to "Lifestyle",
-            TvContract.Programs.Genres.MUSIC to "Music",
-            TvContract.Programs.Genres.NEWS to "News",
-            TvContract.Programs.Genres.SPORTS to "Sports",
-            TvContract.Programs.Genres.TECH_SCIENCE to "Science & Tech",
-            TvContract.Programs.Genres.TRAVEL to "Travel",
-        )
         private const val LAST_ENGAGEMENT = WatchNextPrograms.COLUMN_LAST_ENGAGEMENT_TIME_UTC_MILLIS
         private const val WATCH_NEXT_TYPE = WatchNextPrograms.COLUMN_WATCH_NEXT_TYPE
         private const val WEIGHT = PreviewPrograms.COLUMN_WEIGHT
@@ -524,15 +378,10 @@ class TopShelfRepository(context: Context) {
             PreviewPrograms.ASPECT_RATIO_3_2,
             PreviewPrograms.ASPECT_RATIO_4_3,
         )
-        private const val MIN_WIDTH = 480
-        /** Art this wide is sharp enough for the stage, so there's no need to look further. */
-        private const val SHARP_WIDTH = 1280
-        /** Art narrower than this looks soft stretched across the screen, so an app with nothing else shows it as tiles. */
-        private const val MIN_FULL_SCREEN_WIDTH = 1000
         private const val MIN_THUMB_WIDTH = 200
-        private const val MAX_CANDIDATES = 3
         private const val MAX_UP_NEXT = 8
-        private const val MAX_FEATURED = 6
+        /** About what fits across the screen twice, as tvOS's rows hold. */
+        private const val MAX_ROW = 10
         private const val MAX_CONTINUING = 12
         private const val PROGRESS_INSET = 0.05f
         private const val PROGRESS_HEIGHT = 0.024f
