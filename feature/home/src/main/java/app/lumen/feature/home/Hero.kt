@@ -2,9 +2,10 @@ package app.lumen.feature.home
 
 import android.graphics.Bitmap
 import android.graphics.Canvas
+import android.graphics.ColorMatrix
+import android.graphics.ColorMatrixColorFilter
 import android.graphics.LinearGradient
 import android.graphics.Paint
-import android.graphics.RadialGradient
 import android.graphics.Shader
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.Animatable
@@ -47,6 +48,7 @@ import app.lumen.core.designsystem.LumenColors
 import app.lumen.core.designsystem.LumenDimens
 import app.lumen.core.designsystem.WallpaperBackground
 import app.lumen.core.designsystem.backgroundFrosted
+import app.lumen.core.designsystem.blurred
 import app.lumen.core.designsystem.clearFrosted
 import app.lumen.core.designsystem.renderGradient
 import app.lumen.core.settings.GradientPreset
@@ -157,9 +159,10 @@ private const val SHELF_ART_RETRY_MS = 10_000L
 private const val SHELF_ART_RECHECK_MS = 20_000L
 
 /**
- * The stage behind everything: the wallpaper lit in the color of the focused program in the app's
- * row ([glow]), or of the app's own tile, plus scrims that keep text legible. While browsing [below]
- * the Top Shelf it melts into a frosted copy of itself, as tvOS's does.
+ * The stage behind everything: a deep blur of the focused program in the app's row ([glow]), or of
+ * the app's own tile, as Apple's apps tint the screen behind what's in focus, plus scrims that keep
+ * text legible. With neither, the wallpaper. While browsing [below] the Top Shelf it melts into a
+ * frosted copy of itself, as tvOS's does.
  *
  * All of it is baked into one small bitmap per app, off the main thread. Every extra full-screen
  * layer is another pass for the Chromecast's GPU: drawn separately, these held it to 20 fps.
@@ -236,14 +239,17 @@ internal fun Backdrop(
     }
 }
 
-/** Opaque over [preset]; transparent over a photo wallpaper when there's no preset. Blocking. */
-private fun bakeBackdrop(preset: GradientPreset?, art: Bitmap?): Bitmap {
-    val bitmap = preset?.let(::renderGradient)
+/**
+ * Opaque over a blur of [source] or over [preset]; transparent over a photo wallpaper when there's
+ * neither. Blocking.
+ */
+private fun bakeBackdrop(preset: GradientPreset?, source: Bitmap?): Bitmap {
+    val bitmap = source?.let(::stageBlur)
+        ?: preset?.let(::renderGradient)
         ?: Bitmap.createBitmap(PHOTO_OVERLAY_WIDTH, PHOTO_OVERLAY_HEIGHT, Bitmap.Config.ARGB_8888)
     val canvas = Canvas(bitmap)
     val width = bitmap.width.toFloat()
     val height = bitmap.height.toFloat()
-    if (preset != null && art != null) drawAppLight(canvas, art, width, height)
     // A darkening toward the bottom and the left, where the text and tiles sit.
     val scrim = Paint().apply { isDither = true }
     scrim.shader = LinearGradient(
@@ -260,81 +266,39 @@ private fun bakeBackdrop(preset: GradientPreset?, art: Bitmap?): Bitmap {
         Shader.TileMode.CLAMP,
     )
     canvas.drawRect(0f, 0f, width, height, scrim)
-    if (preset != null) bitmap.setHasAlpha(false)
+    if (source != null || preset != null) bitmap.setHasAlpha(false)
     return bitmap
 }
 
 /**
- * Fills the stage with the color of what's focused: Netflix goes red, Prime Video blue, or the hue of
- * the program in focus in the app's row.
- * Black and white brands have no color to offer and leave the wallpaper showing.
+ * [source] blurred until no shape is left, only its colors, then evened out: richer in color, and
+ * brought to one brightness whether the picture was dark or bright, so white text and tiles read on
+ * it and a dim picture doesn't leave the screen black. Small, as the screen draws it stretched and
+ * smooth. Blocking.
  */
-private fun drawAppLight(canvas: Canvas, art: Bitmap, width: Float, height: Float) {
-    val (dominant, presence) = dominantHue(art) ?: return
-    // Yellow turns to mustard across a whole screen, so it leans amber.
-    val hue = if (dominant in YELLOWS) AMBER_HUE else dominant
-    fun color(hue: Float, value: Float, alpha: Float): Int {
-        val hsv = floatArrayOf((hue + 360f) % 360f, STAGE_SATURATION, value)
-        hsv[2] = value * (STAGE_MAX_LUMINANCE / luminance(hsv[0], hsv[1])).coerceAtMost(1f)
-        return android.graphics.Color.HSVToColor((alpha * presence * 255).toInt(), hsv)
+private fun stageBlur(source: Bitmap): Bitmap {
+    val soft = Bitmap.createScaledBitmap(source, STAGE_BLUR_WIDTH, STAGE_BLUR_HEIGHT, true).blurred(STAGE_BLUR_RADIUS)
+    val pixels = IntArray(STAGE_BLUR_WIDTH * STAGE_BLUR_HEIGHT).also { soft.getPixels(it, 0, STAGE_BLUR_WIDTH, 0, 0, STAGE_BLUR_WIDTH, STAGE_BLUR_HEIGHT) }
+    val luminance = pixels.sumOf { (0.2126 * (it shr 16 and 0xFF) + 0.7152 * (it shr 8 and 0xFF) + 0.0722 * (it and 0xFF)) / 255.0 } / pixels.size
+    val gain = (STAGE_LUMINANCE / luminance.toFloat().coerceAtLeast(0.01f)).coerceIn(STAGE_MIN_GAIN, STAGE_MAX_GAIN)
+    val matrix = ColorMatrix().apply {
+        setSaturation(STAGE_SATURATION)
+        postConcat(ColorMatrix().apply { setScale(gain, gain, gain, 1f) })
     }
-
-    val paint = Paint().apply { isDither = true }
-    paint.color = color(hue, 0.12f, 1f)
-    canvas.drawRect(0f, 0f, width, height, paint)
-    fun light(color: Int, x: Float, y: Float, radius: Float) {
-        paint.shader = RadialGradient(x, y, radius, color, color and 0xFFFFFF, Shader.TileMode.CLAMP)
-        canvas.drawRect(0f, 0f, width, height, paint)
-    }
-    light(color(hue, 0.85f, 0.95f), width * 0.8f, height * 0.1f, width * 0.85f)
-    light(color(hue - 24f, 0.55f, 0.8f), width * 0.08f, height * 0.85f, width * 0.6f)
+    val out = Bitmap.createBitmap(STAGE_BLUR_WIDTH, STAGE_BLUR_HEIGHT, Bitmap.Config.ARGB_8888)
+    Canvas(out).drawBitmap(soft, 0f, 0f, Paint().apply { colorFilter = ColorMatrixColorFilter(matrix) })
+    return out
 }
 
-/** How bright a hue looks at full value, 0..1. At the same value, yellow looks far brighter than blue. */
-private fun luminance(hue: Float, saturation: Float): Float {
-    val color = android.graphics.Color.HSVToColor(floatArrayOf(hue, saturation, 1f))
-    return (0.2126f * android.graphics.Color.red(color) + 0.7152f * android.graphics.Color.green(color) + 0.0722f * android.graphics.Color.blue(color)) / 255f
-}
-
-/**
- * The art's strongest hue, and how much of the art carries it (0..1). Reading the hue alone keeps
- * a red logo on a white banner red, where averaging its pixels would wash it out. Null when the
- * art has no real color.
- */
-private fun dominantHue(art: Bitmap): Pair<Float, Float>? {
-    val small = Bitmap.createScaledBitmap(art, HUE_SAMPLE_WIDTH, HUE_SAMPLE_HEIGHT, true)
-    val weights = FloatArray(HUE_BUCKETS)
-    val hsv = FloatArray(3)
-    for (y in 0 until HUE_SAMPLE_HEIGHT) {
-        for (x in 0 until HUE_SAMPLE_WIDTH) {
-            android.graphics.Color.colorToHSV(small.getPixel(x, y), hsv)
-            if (hsv[1] > 0.4f && hsv[2] > 0.3f) {
-                weights[(hsv[0] / 360f * HUE_BUCKETS).toInt() % HUE_BUCKETS] += hsv[1] * hsv[2]
-            }
-        }
-    }
-    val peak = weights.indices.maxBy { weights[it] }
-    val neighbors = (-2..2).map { offset -> offset to weights[(peak + offset).mod(HUE_BUCKETS)] }
-    val weight = neighbors.sumOf { it.second.toDouble() }.toFloat()
-    if (weight == 0f) return null
-    val center = peak + neighbors.sumOf { (offset, w) -> (offset * w).toDouble() }.toFloat() / weight
-    val share = weight / (HUE_SAMPLE_WIDTH * HUE_SAMPLE_HEIGHT)
-    val presence = ((share - HUE_MIN_SHARE) * HUE_PRESENCE_GAIN).coerceIn(0f, 1f)
-    if (presence == 0f) return null
-    return (center + 0.5f) / HUE_BUCKETS * 360f to presence
-}
-
-private const val STAGE_SATURATION = 0.88f
-/** Keeps every color about as bright as a saturated blue, so white text reads over all of them. */
-private const val STAGE_MAX_LUMINANCE = 0.5f
-private val YELLOWS = 40f..75f
-private const val AMBER_HUE = 34f
-private const val HUE_SAMPLE_WIDTH = 32
-private const val HUE_SAMPLE_HEIGHT = 18
-private const val HUE_BUCKETS = 36
-/** Below this share of colored art (a rainbow Apple logo on black, say), the wallpaper stays. */
-private const val HUE_MIN_SHARE = 0.03f
-private const val HUE_PRESENCE_GAIN = 12f
+private const val STAGE_BLUR_WIDTH = 160
+private const val STAGE_BLUR_HEIGHT = 90
+private const val STAGE_BLUR_RADIUS = 9
+private const val STAGE_SATURATION = 1.35f
+/** About as bright as a deep blue, so white text reads over any of them. */
+private const val STAGE_LUMINANCE = 0.2f
+/** A near-black picture stays dark rather than being lifted into grey noise, and a bright one is held well down. */
+private const val STAGE_MIN_GAIN = 0.35f
+private const val STAGE_MAX_GAIN = 1.8f
 private const val PHOTO_OVERLAY_WIDTH = 240
 private const val PHOTO_OVERLAY_HEIGHT = 135
 /** Short, as the GPU draws two full-screen images for as long as it runs. */

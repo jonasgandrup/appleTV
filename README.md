@@ -8,7 +8,7 @@ Atrium replaces the Google TV home screen with one modelled on Apple TV's, inclu
 
 ## The home screen
 
-Move along the top row and each app shows its own row above it, as Apple TV's Top Shelf does: what you're in the middle of in that app, labelled **Up Next**, then what it recommends. The screen takes on the color of the program in focus, and the tops of the row below peek in at the bottom edge.
+Move along the top row and each app shows its own row above it, as Apple TV's Top Shelf does: what you're in the middle of in that app, labelled **Up Next**, then what it recommends. Behind it, the screen takes on a soft blur of the program in focus, and the tops of the row below peek in at the bottom edge.
 
 Press **Up** to move into the row. The program in focus shows its title and where you are, or how long it is, and **Select** plays it.
 
@@ -28,7 +28,7 @@ Don't want something there? Hold **Select** on it to remove it. It comes back on
 
 ## All your apps
 
-Everything else sits in a grid below, using Apple's six-column layout, over a soft, dark wash of the stage's colors. Hold **Select** on an app to rearrange it, move it to the top row, put it in a folder, hide it or delete it.
+Everything else sits in a grid below, using Apple's six-column layout, over a soft, dark wash of the same colors. Hold **Select** on an app to rearrange it, move it to the top row, put it in a folder, hide it or delete it.
 
 ![The grid of apps, with one selected and its name underneath](docs/images/app-grid.jpg)
 
