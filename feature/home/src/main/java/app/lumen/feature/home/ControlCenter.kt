@@ -91,7 +91,12 @@ private enum class ControlPage { Main, Sound, Network, SleepTimer }
 /** The tabs along the top, as on tvOS, which come and go with what's active. */
 private enum class ControlTab { NowPlaying, General }
 
-private const val CONTROL_CENTER_DIM = 0.45f
+private const val CONTROL_CENTER_DIM = 0.55f
+/**
+ * Darker than other glass: Control Center floats over whatever's on screen, often bright artwork, and
+ * its small words have to read over all of it.
+ */
+private val ControlTint = Color(0x59000000)
 private val ColumnGap = 8.dp
 /** Measured from the picture in Apple's user guide, where these take about a tenth of the screen's width each. */
 private val TileWidth = 102.dp
@@ -260,7 +265,7 @@ private fun TabButton(
                 tint = when {
                     look.focused -> LumenColors.GlassFocused
                     selected -> SelectedTabTint
-                    else -> LumenColors.GlassTint
+                    else -> ControlTint
                 },
             ),
         contentAlignment = Alignment.Center,
@@ -283,7 +288,7 @@ private fun ControlPanel(title: String, content: @Composable ColumnScope.() -> U
     Column(
         Modifier
             .fillMaxWidth()
-            .liquidGlass(TileCorner)
+            .liquidGlass(TileCorner, tint = ControlTint)
             .padding(12.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
@@ -447,7 +452,7 @@ private fun NowPlayingTile(playing: NowPlaying, appName: String?, onOpen: () -> 
     Column(
         Modifier
             .fillMaxWidth()
-            .liquidGlass(TileCorner)
+            .liquidGlass(TileCorner, tint = ControlTint)
             .padding(8.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
@@ -556,7 +561,7 @@ private fun ControlTile(
                 scaleY = scale
             }
             .size(TileWidth, height)
-            .liquidGlass(TileCorner, tint = if (look.focused) LumenColors.GlassFocused else LumenColors.GlassTint),
+            .liquidGlass(TileCorner, tint = if (look.focused) LumenColors.GlassFocused else ControlTint),
     ) {
         if (large) {
             Column(Modifier.align(Alignment.Center), horizontalAlignment = Alignment.CenterHorizontally) {
@@ -595,7 +600,7 @@ private fun RoundButton(
                 scaleY = scale
             }
             .size(size)
-            .liquidGlass(LumenDimens.CapsuleCorner, tint = if (look.focused) LumenColors.GlassFocused else LumenColors.GlassTint),
+            .liquidGlass(LumenDimens.CapsuleCorner, tint = if (look.focused) LumenColors.GlassFocused else ControlTint),
         contentAlignment = Alignment.Center,
     ) {
         content(look.content)

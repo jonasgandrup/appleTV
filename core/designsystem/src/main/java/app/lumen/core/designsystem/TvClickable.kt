@@ -57,6 +57,8 @@ private class TvClickableNode(
 ) : DelegatingNode(), KeyInputModifierNode, FocusEventModifierNode, CompositionLocalConsumerModifierNode {
     private var pressed = false
     private var longPressed = false
+    /** Focus events also arrive when nothing changed, as when what's around this redraws, so only a real arrival clicks. */
+    private var focused = false
 
     private val sounds: UiSounds? get() = currentValueOf(LocalUiSounds)
 
@@ -114,7 +116,8 @@ private class TvClickableNode(
     }
 
     override fun onFocusEvent(focusState: FocusState) {
-        if (focusState.isFocused) sounds?.onFocusMoved()
+        if (focusState.isFocused && !focused) sounds?.onFocusMoved()
+        focused = focusState.isFocused
         // Its key-up will go elsewhere, so nothing else would release it.
         if (!focusState.isFocused && pressed) {
             pressed = false

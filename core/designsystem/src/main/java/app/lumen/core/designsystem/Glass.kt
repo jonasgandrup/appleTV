@@ -25,7 +25,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.staticCompositionLocalOf
+import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
@@ -81,8 +81,12 @@ import kotlin.math.min
  * A blurred copy of what's behind glass, stretched over the whole window. Glass draws its own
  * slice of it, so sharp content behind the glass turns to frost. Null when the background is
  * already smooth, like a gradient, and the glass's tint is enough.
+ *
+ * Not a static local: glass is a modifier node that has to hear when this changes, as when a
+ * screen's frosted capture arrives a moment after Control Center opens, and only a plain
+ * composition local's changes reach a node watching it.
  */
-val LocalGlassBackdrop = staticCompositionLocalOf<ImageBitmap?> { null }
+val LocalGlassBackdrop = compositionLocalOf<ImageBitmap?> { null }
 
 /**
  * Frost of a backdrop that changes while the glass stays put, like the home screen's stage. Read
@@ -99,7 +103,7 @@ class LiveFrost {
 }
 
 /** Takes over from [LocalGlassBackdrop] whenever it has an image. */
-val LocalLiveFrost = staticCompositionLocalOf<LiveFrost?> { null }
+val LocalLiveFrost = compositionLocalOf<LiveFrost?> { null }
 
 /**
  * A floating sheet of glass behind this element's content. Draws outside its bounds for its shadow.
