@@ -3,6 +3,8 @@ package app.lumen.feature.home
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.runtime.getValue
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.runtime.Composable
@@ -220,3 +222,6 @@ internal class ProgramOptions(
 )
 
 internal const val SHELF_KEY = "shelf"
+
+/** How the rows move between the top row and what's below it. Everything that moves then shares it, so it moves as one. */
+internal val BrowseSpec = tween<Float>(500, easing = FastOutSlowInEasing)

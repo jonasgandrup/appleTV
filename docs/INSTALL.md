@@ -54,8 +54,12 @@ the debug key for easy sideloading; use your own signing config before sharing t
 5. **Install and open:**
    ```sh
    adb install -r app/build/outputs/apk/release/app-release.apk
+   adb shell cmd package compile -m speed -f app.lumen.launcher
    adb shell am start -n app.lumen.launcher/.MainActivity
    ```
+   The middle line compiles Atrium for the TV's processor straight away. An app installed this way
+   otherwise runs uncompiled until Android gets round to compiling it while the TV is idle, which
+   can take a day, and every update starts over. It takes a few seconds and changes nothing else.
    Atrium also appears in the Google TV apps list.
 
 ### Make the Home button open Atrium

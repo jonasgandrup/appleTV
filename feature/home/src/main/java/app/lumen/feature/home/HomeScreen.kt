@@ -239,11 +239,11 @@ fun HomeScreen(
                         )
                     },
             ) {
-                val heroHeight = animateDpAsState(
-                    targetValue = if (ui.browsingBelow) 0.dp else maxHeight - ShelfAreaHeight - LumenDimens.SafeVertical,
-                    animationSpec = tween(500, easing = FastOutSlowInEasing),
-                    label = "heroHeight",
-                )
+                // The stage above the dock, a fixed size: the rows slide up over it rather than it shrinking, so
+                // nothing has to be laid out again on every frame of the move. Everything that moves with the rows
+                // reads this one animation, so they all move as one.
+                val stageHeight = maxHeight - ShelfAreaHeight - LumenDimens.SafeVertical
+                val below = animateFloatAsState(if (ui.browsingBelow) 1f else 0f, BrowseSpec, label = "below")
 
                 StageBackdrop(
                     hero = hero,
@@ -263,8 +263,7 @@ fun HomeScreen(
                 // The dock and grid slide off for the full-screen Top Shelf, staying in place for focus to come back to.
                 val slidOff by animateFloatAsState(if (ui.isFullScreen || ui.dockResting) 1f else 0f, tween(450, easing = FastOutSlowInEasing), label = "slidOff")
                 val clockFade by animateFloatAsState(if (ui.dockResting) 0f else 1f, tween(450), label = "clockFade")
-                val belowAmount by animateFloatAsState(if (ui.browsingBelow) 1f else 0f, tween(300), label = "belowAmount")
-                Column(Modifier.fillMaxSize()) {
+                Box(Modifier.fillMaxSize()) {
                     StageTitle(
                         hero = hero,
                         shelfArt = shelfArt,
@@ -272,16 +271,15 @@ fun HomeScreen(
                         firstRowTile = ui.recommendationsFirstTile,
                         onProgramOptions = { item, bounds -> ui.programOptionsFor = ProgramOptions(item, bounds, removable = false) },
                         onRecommendationFocused = { ui.focusedRecommendation.value = it },
-                        modifier = Modifier.fillMaxWidth().height(heroHeight),
+                        modifier = Modifier.fillMaxWidth().height(stageHeight),
                     )
 
                     LazyColumn(
                         state = ui.listState,
                         modifier = Modifier
-                            .weight(1f)
-                            .fillMaxWidth()
+                            .fillMaxSize()
                             .graphicsLayer {
-                                translationY = slidOff * size.height
+                                translationY = (1f - below.value) * stageHeight.toPx() + slidOff * size.height
                                 alpha = 1f - slidOff
                             },
                         // Scrolling up to the screen's edge rather than clipping short of it.
@@ -317,9 +315,9 @@ fun HomeScreen(
                                     firstTile = ui.continueFirstTile,
                                     onOptions = { item, bounds -> ui.programOptionsFor = ProgramOptions(item, bounds, removable = true) },
                                     appName = { pkg -> state.allApps.find { it.packageName == pkg }?.label },
-                                    headingAlpha = { belowAmount },
+                                    headingAlpha = { below.value },
                                     modifier = Modifier
-                                        .graphicsLayer { translationY = belowAmount * ContinueBrowseDrop.toPx() - (1f - belowAmount) * ContinuePeekLift.toPx() }
+                                        .graphicsLayer { translationY = below.value * ContinueBrowseDrop.toPx() - (1f - below.value) * ContinuePeekLift.toPx() }
                                         .padding(top = 4.dp, bottom = 4.dp)
                                         .onFocusChanged {
                                             ui.continueHasFocus = it.hasFocus
@@ -477,13 +475,6 @@ private fun StageTitle(
         onRecommendationFocused = onRecommendationFocused,
         modifier = modifier,
     )
-}
-
-/** A height read during layout, so animating it relayouts without recomposing. */
-private fun Modifier.height(height: State<Dp>) = layout { measurable, constraints ->
-    val h = height.value.roundToPx().coerceIn(constraints.minHeight, constraints.maxHeight)
-    val placeable = measurable.measure(constraints.copy(minHeight = h, maxHeight = h))
-    layout(placeable.width, h) { placeable.place(0, 0) }
 }
 
 @Composable

@@ -2,21 +2,20 @@ package app.lumen.core.designsystem
 
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberUpdatedState
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.composed
-import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.focus.FocusEventModifierNode
+import androidx.compose.ui.focus.FocusState
 import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEvent
 import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.KeyInputModifierNode
 import androidx.compose.ui.input.key.key
-import androidx.compose.ui.input.key.onKeyEvent
-import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
-import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.SuspendingPointerInputModifierNode
+import androidx.compose.ui.node.CompositionLocalConsumerModifierNode
+import androidx.compose.ui.node.DelegatingNode
+import androidx.compose.ui.node.ModifierNodeElement
+import androidx.compose.ui.node.currentValueOf
 
 /**
  * Makes an element focusable and selectable with the remote's center button.
@@ -27,68 +26,101 @@ import androidx.compose.ui.input.pointer.pointerInput
  * Taps work too, for testing in the emulator with a mouse. Plays [LocalUiSounds] when focus
  * arrives from a D-pad press and on select. [onPressedChange] hears select going down and coming
  * up, so the element can answer the click at once, as tvOS's do.
+ *
+ * A modifier node rather than a composed modifier: every tile on the home screen has one, and a node
+ * costs no composition of its own, only an update when its callbacks change.
  */
 fun Modifier.tvClickable(
     onLongClick: (() -> Unit)? = null,
     onPressedChange: (Boolean) -> Unit = {},
     onClick: () -> Unit,
-): Modifier = composed {
-    val sounds = LocalUiSounds.current
-    val click by rememberUpdatedState({ sounds?.select(); onClick() })
-    val longClick by rememberUpdatedState(onLongClick?.let { { sounds?.select(); it() } })
-    val pressedChange by rememberUpdatedState(onPressedChange)
-    var pressed by remember { mutableStateOf(false) }
-    var longPressed by remember { mutableStateOf(false) }
+): Modifier = this.then(TvClickableElement(onLongClick, onPressedChange, onClick)).focusable()
 
-    this
-        .pointerInput(Unit) {
-            detectTapGestures(
-                onTap = { click() },
-                onLongPress = { longClick?.invoke() },
-            )
-        }
-        .onPreviewKeyEvent { event ->
-            if (event.type == KeyEventType.KeyDown && event.key in DirectionKeys) sounds?.onDirectionPressed()
-            false
-        }
-        .onKeyEvent { event ->
-            if (event.key != Key.DirectionCenter && event.key != Key.Enter && event.key != Key.NumPadEnter) {
-                return@onKeyEvent false
-            }
-            when (event.type) {
-                KeyEventType.KeyDown -> {
-                    val repeat = event.nativeKeyEvent.repeatCount
-                    if (repeat == 0) {
-                        pressed = true
-                        longPressed = false
-                        pressedChange(true)
-                    } else if (pressed && !longPressed && longClick != null) {
-                        longPressed = true
-                        pressed = false
-                        pressedChange(false)
-                        longClick?.invoke()
-                    }
-                    true
-                }
-                KeyEventType.KeyUp -> {
-                    if (pressed) pressedChange(false)
-                    if (pressed && !longPressed) click()
-                    pressed = false
+private data class TvClickableElement(
+    val onLongClick: (() -> Unit)?,
+    val onPressedChange: (Boolean) -> Unit,
+    val onClick: () -> Unit,
+) : ModifierNodeElement<TvClickableNode>() {
+    override fun create() = TvClickableNode(onLongClick, onPressedChange, onClick)
+
+    override fun update(node: TvClickableNode) {
+        node.onLongClick = onLongClick
+        node.onPressedChange = onPressedChange
+        node.onClick = onClick
+    }
+}
+
+private class TvClickableNode(
+    var onLongClick: (() -> Unit)?,
+    var onPressedChange: (Boolean) -> Unit,
+    var onClick: () -> Unit,
+) : DelegatingNode(), KeyInputModifierNode, FocusEventModifierNode, CompositionLocalConsumerModifierNode {
+    private var pressed = false
+    private var longPressed = false
+
+    private val sounds: UiSounds? get() = currentValueOf(LocalUiSounds)
+
+    private fun click() {
+        sounds?.select()
+        onClick()
+    }
+
+    private fun longClick(): Boolean {
+        val action = onLongClick ?: return false
+        sounds?.select()
+        action()
+        return true
+    }
+
+    init {
+        delegate(
+            SuspendingPointerInputModifierNode {
+                detectTapGestures(onTap = { click() }, onLongPress = { longClick() })
+            },
+        )
+    }
+
+    override fun onPreKeyEvent(event: KeyEvent): Boolean {
+        if (event.type == KeyEventType.KeyDown && event.key in DirectionKeys) sounds?.onDirectionPressed()
+        return false
+    }
+
+    override fun onKeyEvent(event: KeyEvent): Boolean {
+        if (event.key != Key.DirectionCenter && event.key != Key.Enter && event.key != Key.NumPadEnter) return false
+        return when (event.type) {
+            KeyEventType.KeyDown -> {
+                val repeat = event.nativeKeyEvent.repeatCount
+                if (repeat == 0) {
+                    pressed = true
                     longPressed = false
-                    true
+                    onPressedChange(true)
+                } else if (pressed && !longPressed && onLongClick != null) {
+                    longPressed = true
+                    pressed = false
+                    onPressedChange(false)
+                    longClick()
                 }
-                else -> false
+                true
             }
-        }
-        .onFocusChanged {
-            if (it.isFocused) sounds?.onFocusMoved()
-            // Its key-up will go elsewhere, so nothing else would release it.
-            if (!it.isFocused && pressed) {
+            KeyEventType.KeyUp -> {
+                if (pressed) onPressedChange(false)
+                if (pressed && !longPressed) click()
                 pressed = false
-                pressedChange(false)
+                longPressed = false
+                true
             }
+            else -> false
         }
-        .focusable()
+    }
+
+    override fun onFocusEvent(focusState: FocusState) {
+        if (focusState.isFocused) sounds?.onFocusMoved()
+        // Its key-up will go elsewhere, so nothing else would release it.
+        if (!focusState.isFocused && pressed) {
+            pressed = false
+            onPressedChange(false)
+        }
+    }
 }
 
 private val DirectionKeys = setOf(Key.DirectionLeft, Key.DirectionRight, Key.DirectionUp, Key.DirectionDown)

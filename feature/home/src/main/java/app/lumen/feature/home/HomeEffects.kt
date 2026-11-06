@@ -2,6 +2,7 @@ package app.lumen.feature.home
 
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.getValue
+import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.State
@@ -151,7 +152,9 @@ internal fun HomeFocusEffects(
 
     LaunchedEffect(ui.browsingBelow) {
         if (ui.browsingBelow) return@LaunchedEffect
-        ui.listState.animateScrollToItem(0)
+        // In step with the rows sliding down, where it can be: a scroll of its own pace would have the dock overshoot and settle.
+        val list = ui.listState
+        if (list.firstVisibleItemIndex == 0) list.animateScrollBy(-list.firstVisibleItemScrollOffset.toFloat(), BrowseSpec) else list.animateScrollToItem(0)
         val owed = ui.dockFocusOwed ?: return@LaunchedEffect
         ui.dockFocusOwed = null
         withFrameNanos { }

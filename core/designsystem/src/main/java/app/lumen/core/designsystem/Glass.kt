@@ -27,8 +27,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.composed
-import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -41,15 +39,25 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.graphics.layer.CompositingStrategy
 import androidx.compose.ui.graphics.drawscope.translate
+import androidx.compose.ui.graphics.layer.GraphicsLayer
 import androidx.compose.ui.graphics.layer.drawLayer
-import androidx.compose.ui.graphics.rememberGraphicsLayer
+import androidx.compose.ui.graphics.drawscope.ContentDrawScope
+import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.node.CompositionLocalConsumerModifierNode
+import androidx.compose.ui.node.DrawModifierNode
+import androidx.compose.ui.node.GlobalPositionAwareModifierNode
+import androidx.compose.ui.node.ModifierNodeElement
+import androidx.compose.ui.node.ObserverModifierNode
+import androidx.compose.ui.node.currentValueOf
+import androidx.compose.ui.node.invalidateDraw
+import androidx.compose.ui.node.observeReads
+import androidx.compose.ui.node.requireGraphicsContext
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.IntOffset
 import kotlin.math.roundToInt
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.layout.findRootCoordinates
-import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.Dp
@@ -104,96 +112,157 @@ val LocalLiveFrost = staticCompositionLocalOf<LiveFrost?> { null }
  * afresh each time held a move along the top row to about 40 frames a second. The content stays out
  * of the layer, so text on glass that grows with focus is drawn sharp at its new size.
  */
-fun Modifier.liquidGlass(corner: Dp, tint: Color = LumenColors.GlassTint, clear: Boolean = false): Modifier = composed {
-    val fixedBackdrop = LocalGlassBackdrop.current
-    val liveFrost = LocalLiveFrost.current
-    var origin by remember { mutableStateOf(Offset.Zero) }
-    var window by remember { mutableStateOf(IntSize.Zero) }
-    val layer = rememberGraphicsLayer()
+fun Modifier.liquidGlass(corner: Dp, tint: Color = LumenColors.GlassTint, clear: Boolean = false): Modifier =
+    this.then(LiquidGlassElement(corner, tint, clear))
 
-    this
-        .onGloballyPositioned {
-            origin = it.positionInRoot()
-            window = it.findRootCoordinates().size
+private data class LiquidGlassElement(val corner: Dp, val tint: Color, val clear: Boolean) : ModifierNodeElement<LiquidGlassNode>() {
+    override fun create() = LiquidGlassNode(corner, tint, clear)
+
+    override fun update(node: LiquidGlassNode) = node.update(corner, tint, clear)
+}
+
+/** A modifier node rather than a composed modifier, so glass costs no composition of its own. */
+private class LiquidGlassNode(
+    private var corner: Dp,
+    private var tint: Color,
+    private var clear: Boolean,
+) : Modifier.Node(), DrawModifierNode, GlobalPositionAwareModifierNode, CompositionLocalConsumerModifierNode, ObserverModifierNode {
+    private var fixedBackdrop: ImageBitmap? = null
+    private var liveFrost: LiveFrost? = null
+    private var origin = Offset.Zero
+    private var window = IntSize.Zero
+    private var layer: GraphicsLayer? = null
+    /** What the layer was last drawn with, so it's drawn again only when one of these changes. */
+    private var drawnFor: List<Any?>? = null
+    private var shape: GlassShape? = null
+
+    fun update(corner: Dp, tint: Color, clear: Boolean) {
+        if (corner == this.corner && tint == this.tint && clear == this.clear) return
+        this.corner = corner
+        this.tint = tint
+        this.clear = clear
+        shape = null
+        drawnFor = null
+        invalidateDraw()
+    }
+
+    override fun onAttach() {
+        layer = requireGraphicsContext().createGraphicsLayer().apply { compositingStrategy = CompositingStrategy.Offscreen }
+        readLocals()
+    }
+
+    override fun onDetach() {
+        layer?.let { requireGraphicsContext().releaseGraphicsLayer(it) }
+        layer = null
+        drawnFor = null
+    }
+
+    // The frost behind can change, as when a screen's capture arrives, so these are watched rather than read once.
+    override fun onObservedReadsChanged() {
+        readLocals()
+        invalidateDraw()
+    }
+
+    private fun readLocals() = observeReads {
+        fixedBackdrop = currentValueOf(LocalGlassBackdrop)
+        liveFrost = currentValueOf(LocalLiveFrost)
+    }
+
+    override fun onGloballyPositioned(coordinates: LayoutCoordinates) {
+        val newOrigin = coordinates.positionInRoot()
+        val newWindow = coordinates.findRootCoordinates().size
+        if (newOrigin == origin && newWindow == window) return
+        // The glass moved, as the dock does when the home screen scrolls, so the frost has to slide under it.
+        origin = newOrigin
+        window = newWindow
+        invalidateDraw()
+    }
+
+    override fun ContentDrawScope.draw() {
+        val layer = layer ?: return drawContent()
+        val shape = shape?.takeIf { it.size == size && it.density == density } ?: GlassShape(this, corner, tint, clear).also {
+            shape = it
+            drawnFor = null
         }
-        .drawWithCache {
-            val radius = min(corner.toPx(), size.minDimension / 2)
-            val highlight = Brush.radialGradient(
-                listOf(Color.White.copy(alpha = HIGHLIGHT_ALPHA), Color.Transparent),
-                center = Offset(size.width * 0.15f, 0f),
-                radius = min(size.width * 0.5f, size.height * 3f),
-            )
-            // Bends at most as wide as the corners, so the two straight edges' bends can't meet in a visible seam.
-            val bend = minOf(LENS_BEND.toPx(), radius, size.minDimension * LENS_MAX_SHARE).coerceAtLeast(1f)
-            // The tint, plus a light bounce along the bottom edge: one pass over the glass, not two.
-            val fill = Brush.verticalGradient(
-                0.6f to tint,
-                1f to Color.White.copy(alpha = 0.07f).compositeOver(tint),
-            )
-            val corners = CornerRadius(radius)
-            // Room in the layer around the glass for its shadow.
-            val margin = if (clear) 0f else SHADOW_STEP.toPx() * SHADOW_RINGS
-            val glassSize = size
-            layer.compositingStrategy = CompositingStrategy.Offscreen
+        val frost = liveFrost
+        val live = frost?.image
+        val backdrop = (live ?: fixedBackdrop)?.takeIf { window != IntSize.Zero }
+        val fade = if (live != null && backdrop != null) frost.fade else 1f
+        val previous = frost?.previous?.takeIf { fade < 1f && backdrop != null }
+        val key = listOf(backdrop, previous, fade, origin, window)
+        if (key != drawnFor) {
+            drawnFor = key
+            val margin = shape.margin
             layer.topLeft = IntOffset(-margin.roundToInt(), -margin.roundToInt())
-            // What the layer was last drawn with, so it's drawn again only when one of these changes.
-            var drawnFor: List<Any?>? = null
-
-            /** [image] sliced for this glass, where there are no shaders to bend it. */
-            fun flatBrush(image: ImageBitmap): ShaderBrush {
-                val shader = BitmapShader(image.asAndroidBitmap(), Shader.TileMode.CLAMP, Shader.TileMode.CLAMP)
-                shader.setLocalMatrix(
-                    Matrix().apply {
-                        setScale(window.width.toFloat() / image.width, window.height.toFloat() / image.height)
-                        postTranslate(-origin.x, -origin.y)
-                    },
-                )
-                return ShaderBrush(shader)
-            }
-
-            fun DrawScope.glass(backdrop: ImageBitmap?, previous: ImageBitmap?, fade: Float) {
-                if (!clear) drawGlassShadow(radius)
-                if (backdrop != null) {
-                    // Solid underneath, so the glass doesn't turn see-through halfway.
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                        previous?.let { drawRoundRect(GlassLens.bent(it, window, origin, size, radius, bend), cornerRadius = corners) }
-                        drawRoundRect(GlassLens.bent(backdrop, window, origin, size, radius, bend), cornerRadius = corners, alpha = fade)
-                    } else {
-                        previous?.let { drawRoundRect(flatBrush(it), cornerRadius = corners) }
-                        drawRoundRect(flatBrush(backdrop), cornerRadius = corners, alpha = fade)
-                    }
-                    // The window's scrims don't reach the frost, so it would glow without this.
-                    drawRoundRect(Color.Black.copy(alpha = if (clear) CLEAR_GLASS_DIM else GLASS_DIM), cornerRadius = corners)
+            // Its own Density: handed this scope, the recording would ask it for its density, which asks the recording.
+            layer.record(Density(density, fontScale), layoutDirection, IntSize((size.width + margin * 2).roundToInt(), (size.height + margin * 2).roundToInt())) {
+                translate(margin, margin) {
+                    // The glass's own size, not the layer's, for everything measured from its edges.
+                    withSize(shape.size) { drawGlass(shape, backdrop, previous, fade) }
                 }
-                drawRoundRect(fill, cornerRadius = corners)
-                drawRoundRect(highlight, cornerRadius = corners)
-                // With no frost to bend, as over a moving video, its edge still catches the light.
-                if (backdrop == null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                    drawRoundRect(GlassLens.edgeLight(size, radius, bend), cornerRadius = corners)
-                }
-                drawGlassRim(corner, strength = if (clear) CLEAR_RIM_STRENGTH else GLASS_RIM_STRENGTH)
-            }
-
-            onDrawWithContent {
-                val live = liveFrost?.image
-                val backdrop = (live ?: fixedBackdrop)?.takeIf { window != IntSize.Zero }
-                val fade = if (live != null && backdrop != null) liveFrost.fade else 1f
-                val previous = liveFrost?.previous?.takeIf { fade < 1f && backdrop != null }
-                val key = listOf(backdrop, previous, fade, origin, window)
-                if (key != drawnFor) {
-                    drawnFor = key
-                    // Its own Density: handed this scope, the recording would ask it for its density, which asks the recording.
-                    layer.record(Density(density, fontScale), layoutDirection, IntSize((glassSize.width + margin * 2).roundToInt(), (glassSize.height + margin * 2).roundToInt())) {
-                        translate(margin, margin) {
-                            // The glass's own size, not the layer's, for everything measured from its edges.
-                            withSize(glassSize) { glass(backdrop, previous, fade) }
-                        }
-                    }
-                }
-                drawLayer(layer)
-                drawContent()
             }
         }
+        drawLayer(layer)
+        drawContent()
+    }
+
+    /** [image] sliced for this glass, where there are no shaders to bend it. */
+    private fun flatBrush(image: ImageBitmap): ShaderBrush {
+        val shader = BitmapShader(image.asAndroidBitmap(), Shader.TileMode.CLAMP, Shader.TileMode.CLAMP)
+        shader.setLocalMatrix(
+            Matrix().apply {
+                setScale(window.width.toFloat() / image.width, window.height.toFloat() / image.height)
+                postTranslate(-origin.x, -origin.y)
+            },
+        )
+        return ShaderBrush(shader)
+    }
+
+    private fun DrawScope.drawGlass(shape: GlassShape, backdrop: ImageBitmap?, previous: ImageBitmap?, fade: Float) {
+        val corners = shape.corners
+        if (!clear) drawGlassShadow(shape.radius)
+        if (backdrop != null) {
+            // Solid underneath, so the glass doesn't turn see-through halfway.
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                previous?.let { drawRoundRect(GlassLens.bent(it, window, origin, size, shape.radius, shape.bend), cornerRadius = corners) }
+                drawRoundRect(GlassLens.bent(backdrop, window, origin, size, shape.radius, shape.bend), cornerRadius = corners, alpha = fade)
+            } else {
+                previous?.let { drawRoundRect(flatBrush(it), cornerRadius = corners) }
+                drawRoundRect(flatBrush(backdrop), cornerRadius = corners, alpha = fade)
+            }
+            // The window's scrims don't reach the frost, so it would glow without this.
+            drawRoundRect(Color.Black.copy(alpha = if (clear) CLEAR_GLASS_DIM else GLASS_DIM), cornerRadius = corners)
+        }
+        drawRoundRect(shape.fill, cornerRadius = corners)
+        drawRoundRect(shape.highlight, cornerRadius = corners)
+        // With no frost to bend, as over a moving video, its edge still catches the light.
+        if (backdrop == null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            drawRoundRect(GlassLens.edgeLight(size, shape.radius, shape.bend), cornerRadius = corners)
+        }
+        drawGlassRim(corner, strength = if (clear) CLEAR_RIM_STRENGTH else GLASS_RIM_STRENGTH)
+    }
+}
+
+/** What a sheet of glass of one size looks like, worked out once rather than on every draw. */
+private class GlassShape(scope: DrawScope, corner: Dp, tint: Color, clear: Boolean) {
+    val size = scope.size
+    val density = scope.density
+    val radius = min(with(scope) { corner.toPx() }, size.minDimension / 2)
+    val corners = CornerRadius(radius)
+    val highlight = Brush.radialGradient(
+        listOf(Color.White.copy(alpha = HIGHLIGHT_ALPHA), Color.Transparent),
+        center = Offset(size.width * 0.15f, 0f),
+        radius = min(size.width * 0.5f, size.height * 3f),
+    )
+    // Bends at most as wide as the corners, so the two straight edges' bends can't meet in a visible seam.
+    val bend = minOf(with(scope) { LENS_BEND.toPx() }, radius, size.minDimension * LENS_MAX_SHARE).coerceAtLeast(1f)
+    // The tint, plus a light bounce along the bottom edge: one pass over the glass, not two.
+    val fill = Brush.verticalGradient(
+        0.6f to tint,
+        1f to Color.White.copy(alpha = 0.07f).compositeOver(tint),
+    )
+    /** Room in the layer around the glass for its shadow. */
+    val margin = if (clear) 0f else with(scope) { SHADOW_STEP.toPx() } * SHADOW_RINGS
 }
 
 /** Runs [block] with [size] standing in for this scope's size, for drawing that measures from its own edges. */
