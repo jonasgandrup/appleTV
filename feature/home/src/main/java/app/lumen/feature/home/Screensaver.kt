@@ -33,6 +33,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Stable
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
@@ -282,7 +283,8 @@ internal fun ScreensaverHost(
             },
     ) {
         // Nothing behind the screen saver needs to keep moving.
-        CompositionLocalProvider(LocalFocusIdle provides (focusIdle && !showing)) { content() }
+        val idle = remember { derivedStateOf { focusIdle && !showing } }
+        CompositionLocalProvider(LocalFocusIdle provides idle) { content() }
         AnimatedVisibility(showing, enter = fadeIn(tween(1_500)), exit = fadeOut(tween(300))) {
             Screensaver(type.takeIf { it in categories } ?: ScreensaverType.Aerials, showClock, photos, categories, controls, music)
         }

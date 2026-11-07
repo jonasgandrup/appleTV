@@ -106,7 +106,7 @@ fun HomeScreen(
     val stageGlow = remember {
         derivedStateOf {
             val items = heroArt.value?.recommendations.orEmpty()
-            (ui.focusedRecommendation.value?.takeIf { it in items } ?: items.firstOrNull())?.thumbnail
+            (ui.focusedRecommendation.value?.takeIf { it in items } ?: items.firstOrNull())?.glow
         }
     }
 
@@ -168,6 +168,7 @@ fun HomeScreen(
     }
 
     ContinueWatchingRefresh(viewModel, state.allApps, state.settings.removedPrograms)
+    ShelfPrefetch(viewModel, state.favorites, enabled = state.settings.ambientBackdrop)
     HomeFocusEffects(
         ui = ui,
         state = state,

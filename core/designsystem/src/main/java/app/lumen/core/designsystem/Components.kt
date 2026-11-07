@@ -35,6 +35,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.compositionLocalOf
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -114,8 +115,11 @@ private const val ROW_FOCUS_MS = 80
 /**
  * True once the remote has gone quiet for a while. The focused tile then expands and gently sways,
  * as on tvOS.
+ *
+ * Handed down as a State and read only by the focused tile. Read by every tile, its flipping on after
+ * a pause, and off again with the next press, rebuilt every tile on screen, in the frame of that press.
  */
-val LocalFocusIdle = compositionLocalOf { false }
+val LocalFocusIdle = staticCompositionLocalOf<State<Boolean>> { mutableStateOf(false) }
 
 /** Quick going down, so even a short click shows; focus's own spring brings it back up. */
 private val PressSpec = tween<Float>(70, easing = FastOutSlowInEasing)
@@ -159,8 +163,9 @@ fun AppTile(
     focusScale: Float = FOCUS_SCALE,
     idleFocusScale: Float = IDLE_FOCUS_SCALE,
 ) {
-    val idle = LocalFocusIdle.current
+    val idleState = LocalFocusIdle.current
     var focused by remember { mutableStateOf(false) }
+    val idle = focused && idleState.value
     var pressed by remember { mutableStateOf(false) }
     // -1..1 per axis; positive leans right / down.
     val tiltX = remember { Animatable(0f) }

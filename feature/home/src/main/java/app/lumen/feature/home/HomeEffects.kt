@@ -151,3 +151,27 @@ internal fun HomeFocusEffects(
     }
 }
 
+/**
+ * Reads the rows of the top row's apps that haven't been read yet, one at a time, a little after the home
+ * screen comes up. A row is otherwise read only when focus first stops on its app, which makes it appear
+ * a moment late, and has its pictures decoded while the dock is still moving. Rows already read aren't
+ * touched: they show at once on arrival and refresh themselves from there.
+ */
+@Composable
+internal fun ShelfPrefetch(viewModel: HomeViewModel, apps: List<AppInfo>, enabled: Boolean) {
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    LaunchedEffect(apps, enabled) {
+        if (!enabled) return@LaunchedEffect
+        lifecycle.currentStateFlow
+            .map { it.isAtLeast(Lifecycle.State.RESUMED) }
+            .distinctUntilChanged()
+            .collectLatest { resumed ->
+                if (!resumed) return@collectLatest
+                delay(PREFETCH_DELAY_MS)
+                for (app in apps) if (viewModel.cachedShelfArt(app) == null) viewModel.shelfArt(app)
+            }
+    }
+}
+
+/** Long enough for the home screen to settle and an app's row in focus to load first. */
+private const val PREFETCH_DELAY_MS = 1_500L

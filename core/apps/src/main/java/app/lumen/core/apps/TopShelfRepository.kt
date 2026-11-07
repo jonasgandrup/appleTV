@@ -42,8 +42,13 @@ class ShelfArt(
 class UpNextItem(
     val packageName: String,
     val title: String,
-    /** Tile art with the progress bar drawn in: 16:9, sized for the row it's shown in. */
+    /**
+     * Tile art with the progress bar drawn in: 16:9, sized for the row it's shown in. Kept on the graphics
+     * chip where it can be, so its pixels can't be read; use [glow] for that.
+     */
     val thumbnail: Bitmap,
+    /** A small copy of [thumbnail] whose pixels can be read, for the stage's colors. */
+    val glow: Bitmap,
     /** Where the user is, like "S3, E4 · 23 min left", leaving out whatever the app didn't say. */
     val detail: String?,
     /** Opens the program in its app; null when the app gave none. */
@@ -211,7 +216,8 @@ class TopShelfRepository(context: Context) {
             decodeArt(art, THUMB_WIDTH, THUMB_HEIGHT, upscale = true, minWidth = MIN_THUMB_WIDTH)
         } ?: return null
         program.progress?.let { drawProgress(thumbnail, it) }
-        return UpNextItem(packageName, title, thumbnail, program.detail, program.intentUri, program.place)
+        val glow = Bitmap.createScaledBitmap(thumbnail, GLOW_WIDTH, GLOW_HEIGHT, true)
+        return UpNextItem(packageName, title, thumbnail.onGraphicsChip(), glow, program.detail, program.intentUri, program.place)
     }
 
     private class Program(
@@ -309,6 +315,17 @@ class TopShelfRepository(context: Context) {
         return bounds.outWidth.takeIf { it > 0 && it >= bounds.outHeight }
     }
 
+    /**
+     * This bitmap moved to the graphics chip, where it's drawn from, rather than kept in ordinary memory and
+     * copied there as well: a row of large tiles is over 10 MB in each place. Falls back to this one when
+     * the chip won't take it.
+     */
+    private fun Bitmap.onGraphicsChip(): Bitmap {
+        val moved = runCatching { copy(Bitmap.Config.HARDWARE, false) }.getOrNull() ?: return this
+        recycle()
+        return moved
+    }
+
     /** tvOS's thin progress bar along the bottom of the tile: a white fill on a translucent track. */
     private fun drawProgress(thumbnail: Bitmap, progress: Float) {
         val canvas = Canvas(thumbnail)
@@ -382,6 +399,9 @@ class TopShelfRepository(context: Context) {
         private const val MAX_UP_NEXT = 8
         /** About what fits across the screen twice, as tvOS's rows hold. */
         private const val MAX_ROW = 10
+        /** Plenty for a picture that's only ever blurred into the stage's colors. */
+        private const val GLOW_WIDTH = 192
+        private const val GLOW_HEIGHT = 108
         private const val MAX_CONTINUING = 12
         private const val PROGRESS_INSET = 0.05f
         private const val PROGRESS_HEIGHT = 0.024f
