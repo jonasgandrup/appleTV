@@ -4,7 +4,6 @@ import android.text.format.DateFormat
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
@@ -34,8 +33,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.compositionLocalOf
-import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -98,12 +95,8 @@ private object TileMotion {
 
 private const val TILT_DEGREES = 6f
 
-/** Scale of a focused tile, and of one that has held focus for a while. */
+/** Scale of a focused tile. It stays at that size while focus rests on it, as on tvOS. */
 private const val FOCUS_SCALE = 1.12f
-private const val IDLE_FOCUS_SCALE = 1.17f
-private const val IDLE_SWAY = 0.3f
-private const val IDLE_SWAY_MS = 2_600
-private const val IDLE_SWAYS = 3
 
 /** A tile lifted in Edit Home Screen: a little larger than focus, wiggling as on tvOS. */
 private const val LIFTED_SCALE = 1.2f
@@ -111,15 +104,6 @@ private const val WIGGLE_DEGREES = 1.6f
 private const val WIGGLE_MS = 130
 
 private const val ROW_FOCUS_MS = 80
-
-/**
- * True once the remote has gone quiet for a while. The focused tile then expands and gently sways,
- * as on tvOS.
- *
- * Handed down as a State and read only by the focused tile. Read by every tile, its flipping on after
- * a pause, and off again with the next press, rebuilt every tile on screen, in the frame of that press.
- */
-val LocalFocusIdle = staticCompositionLocalOf<State<Boolean>> { mutableStateOf(false) }
 
 /** Quick going down, so even a short click shows; focus's own spring brings it back up. */
 private val PressSpec = tween<Float>(70, easing = FastOutSlowInEasing)
@@ -161,11 +145,8 @@ fun AppTile(
     showLabel: Boolean = true,
     /** How much focus grows the tile: large tiles grow less, so they stay clear of their neighbors. */
     focusScale: Float = FOCUS_SCALE,
-    idleFocusScale: Float = IDLE_FOCUS_SCALE,
 ) {
-    val idleState = LocalFocusIdle.current
     var focused by remember { mutableStateOf(false) }
-    val idle = focused && idleState.value
     var pressed by remember { mutableStateOf(false) }
     // -1..1 per axis; positive leans right / down.
     val tiltX = remember { Animatable(0f) }
@@ -182,7 +163,7 @@ fun AppTile(
         launch { tiltX.animateTo(0f, settle) }
         launch { tiltY.animateTo(0f, settle) }
     }
-    // Sways a few times and stops: an endless sway would keep the GPU busy for no one.
+    // Wiggles for as long as the tile is lifted in Edit Home Screen, as on tvOS.
     val wiggle = remember { Animatable(0f) }
     LaunchedEffect(lifted) {
         if (!lifted) {
@@ -194,21 +175,10 @@ fun AppTile(
             wiggle.animateTo(-WIGGLE_DEGREES, tween(WIGGLE_MS))
         }
     }
-    LaunchedEffect(focused, idle) {
-        if (!focused || !idle || lifted) return@LaunchedEffect
-        val slow = tween<Float>(IDLE_SWAY_MS, easing = FastOutSlowInEasing)
-        tiltX.animateTo(IDLE_SWAY, slow)
-        repeat(IDLE_SWAYS) {
-            tiltX.animateTo(-IDLE_SWAY, slow)
-            tiltX.animateTo(IDLE_SWAY, slow)
-        }
-        tiltX.animateTo(0f, slow)
-    }
     val scale by animateFloatAsState(
         targetValue = when {
             lifted -> LIFTED_SCALE
             !focused || pressed -> 1f
-            idle -> idleFocusScale
             else -> focusScale
         },
         animationSpec = if (pressed) PressSpec else FocusSpring,

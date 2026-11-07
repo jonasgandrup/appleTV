@@ -33,7 +33,6 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Stable
-import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
@@ -73,7 +72,6 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
-import app.lumen.core.designsystem.LocalFocusIdle
 import app.lumen.core.designsystem.LocalGlassBackdrop
 import app.lumen.core.designsystem.LumenColors
 import app.lumen.core.designsystem.LumenDimens
@@ -117,8 +115,6 @@ private const val SCENE_FRAME_HEIGHT = 180
  */
 private const val MAX_SCREENSAVER_MS = 30 * 60_000L
 
-/** How long the remote stays quiet before tiles settle into [LocalFocusIdle]. */
-private const val FOCUS_IDLE_MS = 7_000L
 
 /** What the remote is doing to a running screen saver. */
 @Stable
@@ -164,7 +160,6 @@ internal fun ScreensaverHost(
     var showing by remember { mutableStateOf(false) }
     var expired by remember { mutableStateOf(false) }
     var swallowKeyUp by remember { mutableStateOf(false) }
-    var focusIdle by remember { mutableStateOf(false) }
     val controls = remember { SaverControls() }
     val isPlaying = nowPlaying?.isPlaying == true
     var musicShown by remember { mutableStateOf(false) }
@@ -196,12 +191,6 @@ internal fun ScreensaverHost(
     LaunchedEffect(wake) { wake.collect { stop() } }
     LaunchedEffect(resumed) { if (!resumed) showing = false }
     LaunchedEffect(startNow) { startNow.collect { showing = true } }
-    LaunchedEffect(resumed, inputCount) {
-        focusIdle = false
-        if (!resumed) return@LaunchedEffect
-        delay(FOCUS_IDLE_MS)
-        focusIdle = true
-    }
     LaunchedEffect(showing) {
         if (!showing) return@LaunchedEffect
         controls.picking = null
@@ -282,9 +271,7 @@ internal fun ScreensaverHost(
                 }
             },
     ) {
-        // Nothing behind the screen saver needs to keep moving.
-        val idle = remember { derivedStateOf { focusIdle && !showing } }
-        CompositionLocalProvider(LocalFocusIdle provides idle) { content() }
+        content()
         AnimatedVisibility(showing, enter = fadeIn(tween(1_500)), exit = fadeOut(tween(300))) {
             Screensaver(type.takeIf { it in categories } ?: ScreensaverType.Aerials, showClock, photos, categories, controls, music)
         }

@@ -63,7 +63,6 @@ internal fun UpNextRow(
     tileWidth: Dp = LumenDimens.ProgramTileWidth,
     tileHeight: Dp = LumenDimens.ProgramTileHeight,
     focusScale: Float = PROGRAM_FOCUS_SCALE,
-    idleFocusScale: Float = PROGRAM_IDLE_FOCUS_SCALE,
 ) {
     Column(modifier) {
         LumenText(
@@ -90,7 +89,6 @@ internal fun UpNextRow(
                     tileWidth,
                     tileHeight,
                     focusScale,
-                    idleFocusScale,
                 )
             }
         }
@@ -108,7 +106,6 @@ private fun UpNextTile(
     width: Dp,
     height: Dp,
     focusScale: Float,
-    idleFocusScale: Float,
 ) {
     val context = LocalContext.current
     val view = LocalView.current
@@ -133,7 +130,6 @@ private fun UpNextTile(
             height = height,
             showLabel = false,
             focusScale = focusScale,
-            idleFocusScale = idleFocusScale,
             tileModifier = focusModifier
                 .onFocusChanged {
                     focused = it.isFocused
@@ -152,5 +148,4 @@ private fun UpNextTile(
 }
 
 private const val PROGRAM_FOCUS_SCALE = 1.08f
-private const val PROGRAM_IDLE_FOCUS_SCALE = 1.11f
 private val ProgramLabelHeight = 36.dp

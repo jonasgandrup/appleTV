@@ -99,7 +99,6 @@ internal fun Hero(
                     tileWidth = LumenDimens.ShelfRowTileWidth,
                     tileHeight = LumenDimens.ShelfRowTileHeight,
                     focusScale = SHELF_ROW_FOCUS_SCALE,
-                    idleFocusScale = SHELF_ROW_IDLE_FOCUS_SCALE,
                     modifier = Modifier.offset(y = LumenDimens.SafeVertical - 6.dp),
                 )
             }
@@ -109,7 +108,6 @@ internal fun Hero(
 
 /** Large tiles grow less, so they stay clear of their neighbors. */
 private const val SHELF_ROW_FOCUS_SCALE = 1.05f
-private const val SHELF_ROW_IDLE_FOCUS_SCALE = 1.07f
 
 /**
  * The [hero]'s own row of programs from its TV channels, once focus has rested on it for a moment, so
