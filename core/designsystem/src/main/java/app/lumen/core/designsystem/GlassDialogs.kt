@@ -24,6 +24,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
@@ -34,6 +35,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.TextRange
@@ -45,6 +49,9 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.window.DialogWindowProvider
 import kotlin.math.roundToInt
+
+/** Told of each key pressed in a window over the home screen, which the home screen itself never sees. */
+val LocalRemoteActivity = staticCompositionLocalOf<() -> Unit> { {} }
 
 /**
  * A sheet of glass floating over the dimmed screen, at [alignment], or beside [anchor] (bounds in
@@ -96,7 +103,17 @@ fun GlassOverlay(
         val appear = remember { Animatable(0f) }
         LaunchedEffect(Unit) { appear.animateTo(1f, spring(dampingRatio = 0.75f, stiffness = Spring.StiffnessMediumLow)) }
 
-        Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = dim)), contentAlignment = alignment) {
+        val activity = LocalRemoteActivity.current
+        Box(
+            Modifier
+                .fillMaxSize()
+                .onPreviewKeyEvent {
+                    if (it.type == KeyEventType.KeyDown) activity()
+                    false
+                }
+                .background(Color.Black.copy(alpha = dim)),
+            contentAlignment = alignment,
+        ) {
             CompositionLocalProvider(LocalLiveFrost provides null, LocalGlassBackdrop provides frost) {
                 Box(
                     Modifier.graphicsLayer {

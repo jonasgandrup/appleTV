@@ -8,7 +8,11 @@ import android.graphics.LinearGradient
 import android.graphics.Paint
 import android.graphics.Shader
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.EnterExitState
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -34,8 +38,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
@@ -49,7 +55,6 @@ import app.lumen.core.designsystem.LumenDimens
 import app.lumen.core.designsystem.WallpaperBackground
 import app.lumen.core.designsystem.backgroundFrosted
 import app.lumen.core.designsystem.blurred
-import app.lumen.core.designsystem.clearFrosted
 import app.lumen.core.designsystem.renderGradient
 import app.lumen.core.settings.GradientPreset
 import app.lumen.core.settings.Wallpaper
@@ -59,6 +64,7 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.distinctUntilChangedBy
 import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
 import kotlin.math.roundToInt
@@ -83,13 +89,18 @@ internal fun Hero(
         AnimatedContent(
             targetState = shelfArt?.takeIf { visible && it.recommendations.isNotEmpty() },
             contentKey = { it?.packageName },
-            transitionSpec = { fadeIn(tween(300)) togetherWith fadeOut(tween(150)) using null },
+            transitionSpec = { EnterTransition.None togetherWith ExitTransition.None using null },
             contentAlignment = Alignment.BottomStart,
             modifier = Modifier.align(Alignment.BottomStart).fillMaxWidth(),
             label = "recommendations",
         ) { target ->
             // Down into the space the list leaves above the dock's glass, so the row sits right over it.
             if (target != null) {
+                // Faded here, as fadeIn and fadeOut would draw both whole rows into offscreen buffers on every move along the dock.
+                val rowAlpha = transition.animateFloat(
+                    transitionSpec = { tween(if (targetState == EnterExitState.Visible) 300 else 150) },
+                    label = "rowAlpha",
+                ) { if (it == EnterExitState.Visible) 1f else 0f }
                 UpNextRow(
                     items = target.recommendations,
                     heading = target.heading,
@@ -99,7 +110,12 @@ internal fun Hero(
                     tileWidth = LumenDimens.ShelfRowTileWidth,
                     tileHeight = LumenDimens.ShelfRowTileHeight,
                     focusScale = SHELF_ROW_FOCUS_SCALE,
-                    modifier = Modifier.offset(y = LumenDimens.SafeVertical - 6.dp),
+                    modifier = Modifier
+                        .offset(y = LumenDimens.SafeVertical - 6.dp)
+                        .graphicsLayer {
+                            alpha = rowAlpha.value
+                            compositingStrategy = CompositingStrategy.ModulateAlpha
+                        },
                 )
             }
         }
@@ -133,6 +149,7 @@ internal fun rememberShelfArt(hero: State<AppInfo?>, enabled: Boolean, removedPr
                 var retries = SHELF_ART_RETRIES
                 while (retries-- > 0 && viewModel.shelfArtIncomplete(app)) {
                     delay(SHELF_ART_RETRY_MS)
+                    lifecycle.currentStateFlow.first { it.isAtLeast(Lifecycle.State.RESUMED) }
                     art.value = viewModel.refreshShelfArt(app)
                 }
                 lifecycle.currentStateFlow
@@ -193,7 +210,8 @@ internal fun Backdrop(
             val baked = bakeBackdrop(preset, glow ?: art)
             // A transparent bake has nothing to frost by itself; glass falls back to the wallpaper's frost.
             val opaque = baked.takeUnless { it.hasAlpha() }
-            val clear = opaque?.clearFrosted()
+            // Already soft enough for the dock's glass to bend, so it needs no blur of its own.
+            val clear = opaque
             val background = opaque?.backgroundFrosted()
             // Starts handing the pictures to the graphics chip now, rather than on the frame that first shows them.
             listOfNotNull(baked, clear, background).forEach(Bitmap::prepareToDraw)

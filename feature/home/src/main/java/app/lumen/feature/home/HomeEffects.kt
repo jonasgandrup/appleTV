@@ -26,6 +26,8 @@ import kotlinx.coroutines.flow.map
 
 private const val CONTINUE_RECHECK_MS = 20_000L
 private const val SETTLE_TIMEOUT_MS = 1_000L
+private const val PENDING_FOCUS_TRIES = 20
+private const val PENDING_FOCUS_RETRY_MS = 50L
 internal const val SETTINGS_FOCUS_KEY = "settings"
 
 /** Rereads Continue Watching on coming back from an app, and again a little later, since apps can take a moment to publish what was just watched. */
@@ -62,6 +64,7 @@ internal fun HomeFocusEffects(
     controlCenterRequests: MutableSharedFlow<Unit>,
     drop: () -> Unit,
 ) {
+    val windowInfo = LocalWindowInfo.current
     // If the last program goes while focus is on it, focus needs somewhere to land.
     LaunchedEffect(continueWatching.isEmpty()) {
         if (continueWatching.isEmpty() && ui.continueHasFocus) runCatching { ui.firstFocus.requestFocus() }
@@ -112,19 +115,42 @@ internal fun HomeFocusEffects(
     // It waits for an open folder to close, whose window would otherwise take focus back.
     LaunchedEffect(ui.pendingFocus, shelfDock, state.grid, folderIsOpen) {
         val key = ui.pendingFocus?.takeUnless { folderIsOpen } ?: return@LaunchedEffect
-        withFrameNanos { }
-        if (runCatching { ui.focusFor(key).requestFocus() }.isSuccess) ui.pendingFocus = null
+        val inDock = shelfDock.any { it.key == key }
+        repeat(PENDING_FOCUS_TRIES) {
+            withFrameNanos { }
+            if (runCatching { ui.focusFor(key).requestFocus() }.isSuccess) {
+                // Held for a moment, as this can land on the old tile with the new arrangement yet to arrive.
+                delay(SETTLE_TIMEOUT_MS)
+                ui.pendingFocus = null
+                return@LaunchedEffect
+            }
+            // Scrolled far enough away, the dock has to come back to take focus.
+            if (inDock) ui.browsingBelow = false
+            delay(PENDING_FOCUS_RETRY_MS)
+        }
+        ui.pendingFocus = null
+        ui.returnToDock()
     }
 
-    // Home pressed while already home: back to the top, like tvOS. Home passes through Google TV's home
-    // for a moment, and Android puts focus back where it was once Atrium's window has it again, so this
-    // waits for that rather than having its own move undone.
-    val windowInfo = LocalWindowInfo.current
+    // An app uninstalled, or removed some other way, takes focus with it if focus was on its tile.
+    val itemKeys = remember(shelfDock, state.grid) { (shelfDock + state.grid).mapTo(HashSet()) { it.key } }
+    LaunchedEffect(itemKeys) {
+        val key = viewModel.lastFocusKey ?: return@LaunchedEffect
+        if (state.loading || key == SETTINGS_FOCUS_KEY || key in itemKeys || ui.pendingFocus != null || editor.active) return@LaunchedEffect
+        withFrameNanos { }
+        ui.returnToDock()
+    }
+
+    // Home pressed while already home: back to the top, like tvOS. Anything open closes first, as each has
+    // a window of its own that would keep Atrium's from getting focus back. Home passes through Google TV's
+    // home for a moment, and Android puts focus back where it was once Atrium's window has it again, so
+    // moving focus waits for that rather than having the move undone.
     LaunchedEffect(homePresses) {
         homePresses.collect {
+            if (ui.closeForHome(drop)) return@collect
             snapshotFlow { windowInfo.isWindowFocused }.first { it }
             withFrameNanos { }
-            ui.homePressed(drop)
+            ui.focusFirstApp()
         }
     }
 
@@ -143,6 +169,7 @@ internal fun HomeFocusEffects(
         if (list.firstVisibleItemIndex == 0) list.animateScrollBy(-list.firstVisibleItemScrollOffset.toFloat(), BrowseSpec) else list.animateScrollToItem(0)
         val owed = ui.dockFocusOwed ?: return@LaunchedEffect
         ui.dockFocusOwed = null
+        snapshotFlow { windowInfo.isWindowFocused }.first { it }
         withFrameNanos { }
         when (owed) {
             DockFocus.FirstApp -> ui.focusFirstApp()

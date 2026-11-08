@@ -60,6 +60,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import androidx.core.graphics.drawable.toBitmap
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -213,6 +214,7 @@ fun SettingsScreen(viewModel: SettingsViewModel) {
     }
 }
 
+private const val HIDDEN_APP_ICON_PX = 64
 private const val SETTINGS_DIM = 0.72f
 private const val WALLPAPER_PAGE_DIM = 0.35f
 private val HintHeight = 84.dp
@@ -640,6 +642,7 @@ private fun SwatchGrid(
 
 @Composable
 private fun HiddenAppsPage(viewModel: SettingsViewModel) {
+    val context = LocalContext.current
     val hidden by viewModel.hiddenApps.collectAsStateWithLifecycle()
     val first = rememberInitialFocus()
 
@@ -655,12 +658,15 @@ private fun HiddenAppsPage(viewModel: SettingsViewModel) {
         verticalArrangement = Arrangement.spacedBy(2.dp),
     ) {
         items(hidden, key = { it.packageName }) { app ->
-            val icon = remember(app.icon) { app.icon.asImageBitmap() }
+            // Read here rather than kept for every installed app, as this short list is the only place that shows it.
+            val icon = remember(app.packageName) {
+                runCatching { context.packageManager.getActivityIcon(app.component).toBitmap(HIDDEN_APP_ICON_PX, HIDDEN_APP_ICON_PX).asImageBitmap() }.getOrNull()
+            }
             MenuRow(
                 title = app.label,
                 value = "Show",
                 onClick = { viewModel.unhide(app) },
-                leading = { Image(icon, null, Modifier.size(26.dp), filterQuality = FilterQuality.High) },
+                leading = { icon?.let { Image(it, null, Modifier.size(26.dp), filterQuality = FilterQuality.High) } },
                 modifier = if (app == hidden.first()) Modifier.focusRequester(first) else Modifier,
             )
         }

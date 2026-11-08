@@ -186,6 +186,8 @@ fun HomeScreen(
         type = state.settings.screensaverType,
         showClock = state.settings.screensaverClock,
         holdOff = !state.settings.screensaverDuringMusic && device.nowPlaying?.isPlaying == true,
+        overlayOpen = ui.menuOpen || openFolder != null,
+        onStart = ui::closeOverlays,
         nowPlaying = device.nowPlaying,
         onTypeChange = { viewModel.setScreensaverType(it) },
         loadPhotos = viewModel::screensaverPhotos,

@@ -29,6 +29,16 @@ class MainActivity : ComponentActivity() {
         if (!container.topShelf.hasPermission) requestPermissions(arrayOf(TopShelfRepository.PERMISSION), 0)
     }
 
+    override fun onStart() {
+        super.onStart()
+        (application as LumenApplication).container.onShown()
+    }
+
+    override fun onStop() {
+        super.onStop()
+        (application as LumenApplication).container.onHidden()
+    }
+
     override fun onDestroy() {
         if (live?.get() === this) live = null
         super.onDestroy()

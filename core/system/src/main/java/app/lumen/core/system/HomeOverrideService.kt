@@ -42,6 +42,8 @@ class HomeOverrideService : AccessibilityService() {
     /** The last thing in front other than the stock home, which Home always passes through first. */
     private var lastApp: String? = null
     private val handler = Handler(Looper.getMainLooper())
+    /** The stock home appeared again too soon after a redirect, as a second quick press of Home makes it do. */
+    private val redirectLater = Runnable { if (enabled && !HomeOverride.isSuspended()) redirect() }
     private var homeHeld = false
     private val onHomeHeld = Runnable {
         homeHeld = true
@@ -73,14 +75,24 @@ class HomeOverrideService : AccessibilityService() {
             if (pkg !in TRANSIENT_PACKAGES) {
                 HomeOverride.resume()
                 lastApp = pkg
+                handler.removeCallbacks(redirectLater)
             }
             return
         }
         if (!enabled || HomeOverride.isSuspended()) return
 
-        val now = SystemClock.elapsedRealtime()
-        if (now - lastRedirect < DEBOUNCE_MS) return
-        lastRedirect = now
+        val sinceRedirect = SystemClock.elapsedRealtime() - lastRedirect
+        if (sinceRedirect < DEBOUNCE_MS) {
+            // Dropped, this would strand the user on the stock home. Whatever comes to the front next cancels it.
+            handler.removeCallbacks(redirectLater)
+            handler.postDelayed(redirectLater, DEBOUNCE_MS - sinceRedirect)
+            return
+        }
+        redirect()
+    }
+
+    private fun redirect() {
+        lastRedirect = SystemClock.elapsedRealtime()
         val fromApp = lastApp != null && lastApp != packageName
         runCatching { startActivity(HomeOverride.lumenHomeIntent(this).putExtra(HomeOverride.EXTRA_FROM_APP, fromApp)) }
     }
@@ -106,6 +118,7 @@ class HomeOverrideService : AccessibilityService() {
         if (instance === this) instance = null
         runCatching { unregisterReceiver(screenOff) }
         handler.removeCallbacks(onHomeHeld)
+        handler.removeCallbacks(redirectLater)
         scope.cancel()
         super.onDestroy()
     }

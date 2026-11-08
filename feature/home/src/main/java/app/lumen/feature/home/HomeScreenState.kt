@@ -74,32 +74,32 @@ internal class HomeScreenState(browsingBelow: Boolean, openFolderId: String?, va
     /** The requester for [key] if its tile has ever been shown. */
     fun knownFocus(key: String): FocusRequester? = tileFocus[key]
 
-    /** Something is open over the home screen. */
-    val overlayOpen: Boolean
-        get() = controlCenterOpen || openFolderId != null || optionsFor != null || programOptionsFor != null ||
-            folderOptionsFor != null || renaming != null
+    /** Control Center or a menu is open over the home screen. A folder that's open counts too, but only its screen knows it still exists. */
+    val menuOpen: Boolean
+        get() = controlCenterOpen || optionsFor != null || programOptionsFor != null || folderOptionsFor != null || renaming != null
 
-    /** Home pressed while already home: everything closes, as on tvOS. */
-    fun closeEverything() {
+    /** Closes whatever is open over the home screen. */
+    fun closeOverlays() {
         optionsFor = null
         folderOptionsFor = null
         programOptionsFor = null
         renaming = null
         openFolderId = null
         controlCenterOpen = false
-        browsingBelow = false
     }
 
     /**
-     * Home pressed while already home: everything closes and focus goes to the first app, as on tvOS.
-     * From below, it waits for the scroll back up that leaving the rows below starts, as a second scroll
-     * would cancel that one.
+     * Home pressed while already home: everything closes, and focus is to go to the first app, as on tvOS.
+     * True when it was below the top row, where focus waits for the scroll back up that leaving those rows
+     * starts, as a second scroll would cancel that one. Otherwise focus is the caller's to move.
      */
-    suspend fun homePressed(drop: () -> Unit) {
+    fun closeForHome(drop: () -> Unit): Boolean {
         if (editor.editing) drop()
         val wasBelow = browsingBelow
-        closeEverything()
-        if (wasBelow) dockFocusOwed = DockFocus.FirstApp else focusFirstApp()
+        closeOverlays()
+        browsingBelow = false
+        if (wasBelow) dockFocusOwed = DockFocus.FirstApp
+        return wasBelow
     }
 
     /**
@@ -111,6 +111,13 @@ internal class HomeScreenState(browsingBelow: Boolean, openFolderId: String?, va
             runCatching { firstFocus.requestFocus() }
             withFrameNanos { }
         }
+    }
+
+    /** Up to the top row from wherever focus is. Scrolled far enough away, the dock doesn't exist to take focus until it's scrolled back. */
+    fun returnToDock() {
+        val dockExists = listState.layoutInfo.visibleItemsInfo.any { it.key == SHELF_KEY }
+        if (dockExists) focusDock() else dockFocusOwed = DockFocus.LastApp
+        browsingBelow = false
     }
 
     /** Focus back to the top row, on the app last focused there if it's still around. */
@@ -127,12 +134,7 @@ internal class HomeScreenState(browsingBelow: Boolean, openFolderId: String?, va
     private fun back(onFirstApp: Boolean, drop: () -> Unit) {
         when {
             editor.editing -> drop()
-            !dockHasFocus -> {
-                // Scrolled far enough away, the dock doesn't exist to take focus until it's scrolled back.
-                val dockExists = listState.layoutInfo.visibleItemsInfo.any { it.key == SHELF_KEY }
-                if (dockExists) focusDock() else dockFocusOwed = DockFocus.LastApp
-                browsingBelow = false
-            }
+            !dockHasFocus -> returnToDock()
             onFirstApp -> screensaverRequests.tryEmit(Unit)
         }
     }

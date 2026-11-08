@@ -11,7 +11,6 @@ data class AppInfo(
     val label: String,
     /** 16:9 tile artwork: the app's TV banner when it has a sharp one, otherwise a card built from its icon. */
     val art: Bitmap,
-    val icon: Bitmap,
     /** A deep, saturated color derived from the icon, used behind icon-only tiles. */
     val accentColor: Int,
     val category: AppCategory,

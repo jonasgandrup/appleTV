@@ -5,6 +5,7 @@ import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.MutableTransitionState
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
@@ -33,6 +34,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Stable
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
@@ -44,6 +46,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -73,6 +76,7 @@ import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
 import app.lumen.core.designsystem.LocalGlassBackdrop
+import app.lumen.core.designsystem.LocalRemoteActivity
 import app.lumen.core.designsystem.LumenColors
 import app.lumen.core.designsystem.LumenDimens
 import app.lumen.core.designsystem.LumenText
@@ -139,7 +143,9 @@ private class SaverControls {
  * While the timer runs Lumen holds the screen on, so Google TV's own ambient mode can't start
  * first; it lets go [MAX_SCREENSAVER_MS] into the screen saver, unless [nowPlaying] is playing, since
  * the TV sleeping would cut the music off and the scenery keeps the screen moving meanwhile. With
- * [holdOff], the screen saver doesn't start by itself, though Back can still start one.
+ * [holdOff], the screen saver doesn't start by itself, though Back can still start one. Windows over
+ * the home screen would sit in front of it, so [onStart] closes them as it starts, and it stops if
+ * one opens ([overlayOpen]).
  */
 @Composable
 internal fun ScreensaverHost(
@@ -147,6 +153,8 @@ internal fun ScreensaverHost(
     type: ScreensaverType,
     showClock: Boolean,
     holdOff: Boolean,
+    overlayOpen: Boolean,
+    onStart: () -> Unit,
     nowPlaying: NowPlaying?,
     onTypeChange: (ScreensaverType) -> Unit,
     loadPhotos: suspend () -> List<String>,
@@ -191,8 +199,10 @@ internal fun ScreensaverHost(
     LaunchedEffect(wake) { wake.collect { stop() } }
     LaunchedEffect(resumed) { if (!resumed) showing = false }
     LaunchedEffect(startNow) { startNow.collect { showing = true } }
+    LaunchedEffect(overlayOpen) { if (overlayOpen) showing = false }
     LaunchedEffect(showing) {
         if (!showing) return@LaunchedEffect
+        onStart()
         controls.picking = null
         controls.showDetails = true
         controls.showCover = false
@@ -271,8 +281,15 @@ internal fun ScreensaverHost(
                 }
             },
     ) {
-        content()
-        AnimatedVisibility(showing, enter = fadeIn(tween(1_500)), exit = fadeOut(tween(300))) {
+        // Once the opaque screen saver has fully faded in, what's behind it needn't be drawn on every frame.
+        val saverState = remember { MutableTransitionState(false) }
+        saverState.targetState = showing
+        val covered = remember { derivedStateOf { saverState.isIdle && saverState.currentState } }
+        val onRemoteActivity = remember { { inputCount++; Unit } }
+        Box(Modifier.fillMaxSize().drawWithContent { if (!covered.value) drawContent() }) {
+            CompositionLocalProvider(LocalRemoteActivity provides onRemoteActivity) { content() }
+        }
+        AnimatedVisibility(saverState, enter = fadeIn(tween(1_500)), exit = fadeOut(tween(300))) {
             Screensaver(type.takeIf { it in categories } ?: ScreensaverType.Aerials, showClock, photos, categories, controls, music)
         }
     }

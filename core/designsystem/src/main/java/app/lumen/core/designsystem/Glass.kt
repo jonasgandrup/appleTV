@@ -23,7 +23,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
-import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.ui.Modifier
@@ -458,18 +457,10 @@ private tailrec fun Context.findActivity(): Activity? = when (this) {
 private const val FROST_WIDTH = 192
 private const val FROST_HEIGHT = 108
 private const val FROST_RADIUS = 7
-private const val CLEAR_FROST_RADIUS = 4
 
 /** This image, shrunk and blurred into frost. Blocking. */
 fun Bitmap.frosted(): Bitmap =
     Bitmap.createScaledBitmap(this, FROST_WIDTH, FROST_HEIGHT, true).blurred(FROST_RADIUS)
-
-/**
- * A lighter frost, for tvOS's clear glass over rich media: what's behind it stays recognizable while
- * text on it wouldn't, so it's for controls that carry pictures, like the top row. Blocking.
- */
-fun Bitmap.clearFrosted(): Bitmap =
-    Bitmap.createScaledBitmap(this, FROST_WIDTH * 2, FROST_HEIGHT * 2, true).blurred(CLEAR_FROST_RADIUS)
 
 /**
  * Frost for a whole screen behind tiles, as tvOS's home screen has below the top row: blurred until

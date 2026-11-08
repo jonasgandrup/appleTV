@@ -55,6 +55,8 @@ class UpNextItem(
     val intentUri: String?,
     /** Where the user is in it. When this changes, they've watched it. */
     internal val place: String,
+    /** Differs whenever anything drawn on this tile would, so an unchanged tile needn't be made again. */
+    internal val key: String,
 )
 
 /**
@@ -72,6 +74,9 @@ class TopShelfRepository(context: Context) {
 
     private val context = context.applicationContext
     private val cache = ConcurrentHashMap<String, Entry>()
+    // Few at a time, so a row being read doesn't compete with the animation on screen for this device's four cores.
+    private val downloading = Dispatchers.IO.limitedParallelism(MAX_DOWNLOADS)
+    private val decoding = Dispatchers.Default.limitedParallelism(MAX_DECODES)
     /** Replaced whole, by [continueWatching], which runs one at a time, and by [removeProgram]. */
     @Volatile
     private var continuing: List<UpNextItem> = emptyList()
@@ -81,10 +86,11 @@ class TopShelfRepository(context: Context) {
     @Volatile
     var removedPrograms: Map<String, String> = emptyMap()
 
-    private class Entry(val art: ShelfArt?, val staleAt: Long, val complete: Boolean)
+    /** [source] says what the app published for this, so a reread that finds the same can stop there. */
+    private class Entry(val art: ShelfArt?, val staleAt: Long, val complete: Boolean, val source: String?)
 
     /** What a read found, and whether everything it asked for arrived. */
-    private class Loaded(val art: ShelfArt?, val complete: Boolean)
+    private class Loaded(val art: ShelfArt?, val complete: Boolean, val source: String)
 
     val hasPermission: Boolean
         get() = context.checkSelfPermission(PERMISSION) == PackageManager.PERMISSION_GRANTED
@@ -118,7 +124,7 @@ class TopShelfRepository(context: Context) {
                 else -> loaded.art
             }
             val complete = loaded?.complete == true
-            cache[packageName] = Entry(art, SystemClock.elapsedRealtime() + if (complete) CACHE_MS else RETRY_MS, complete)
+            cache[packageName] = Entry(art, SystemClock.elapsedRealtime() + if (complete) CACHE_MS else RETRY_MS, complete, loaded?.source)
             art
         }
     }
@@ -128,8 +134,14 @@ class TopShelfRepository(context: Context) {
 
     /** Everything is reread the next time it's asked for, while still showing what's known until then. */
     fun expireAll() {
-        cache.replaceAll { _, entry -> Entry(entry.art, 0L, entry.complete) }
+        cache.replaceAll { _, entry -> Entry(entry.art, 0L, entry.complete, entry.source) }
     }
+
+    /**
+     * Lets go of every app's row, for when another app has the screen and could use the memory. Only the
+     * references go: what's on screen may still be drawing these. They're read again on coming back.
+     */
+    fun releaseRows() = cache.clear()
 
     /**
      * What the user is in the middle of across all of [packageNames], most recently watched first.
@@ -147,10 +159,13 @@ class TopShelfRepository(context: Context) {
             val signature = programs.joinToString("|") { (packageName, it) -> "$packageName${it.title}${it.detail}${it.progress}${it.intentUri}" }
             if (signature == continuingSignature) return@withContext continuing
             coroutineScope {
+                val known = continuing.associateBy { it.key }
                 val items = programs.map { (packageName, program) ->
                     async {
-                        val bytes = runCatching { open(program.art.first()).use(InputStream::readBytes) }.getOrNull() ?: return@async null
-                        upNextItem(packageName, program, bytes)
+                        known[program.key] ?: run {
+                            val bytes = withContext(downloading) { runCatching { open(program.art.first()).use(InputStream::readBytes) }.getOrNull() } ?: return@async null
+                            withContext(decoding) { upNextItem(packageName, program, bytes) }
+                        }
                     }
                 }.awaitAll().filterNotNull()
                 // A download that failed gets another try next time, with the fuller row staying up until then.
@@ -171,7 +186,7 @@ class TopShelfRepository(context: Context) {
         val key = programKey(item.packageName, item.title)
         // Taken out first, so the newest removal goes last and is the last to be forgotten.
         removedPrograms = removedPrograms - key + (key to item.place)
-        cache.computeIfPresent(item.packageName) { _, entry -> Entry(entry.art, 0L, entry.complete) }
+        cache.computeIfPresent(item.packageName) { _, entry -> Entry(entry.art, 0L, entry.complete, entry.source) }
         continuing = continuing.filterNot { it.packageName == item.packageName && it.title == item.title }
         return continuing
     }
@@ -189,22 +204,31 @@ class TopShelfRepository(context: Context) {
         // A program's poster and thumbnail can be the same image, so each is fetched once.
         val downloads = HashMap<Uri, Deferred<ByteArray?>>()
         fun download(uri: Uri) = downloads.getOrPut(uri) {
-            async(Dispatchers.IO) { runCatching { open(uri).use(InputStream::readBytes) }.getOrNull() }
+            async(downloading) { runCatching { open(uri).use(InputStream::readBytes) }.getOrNull() }
         }
         // What the user is in the middle of first, as tvOS's Up Next does, then what the app suggests.
         val programs = (watchNext + preview).distinctBy { it.title }.take(MAX_ROW)
-        val recommendations = programs.map { program ->
-            val art = program.art.map(::download)
-            async(Dispatchers.Default) {
-                // The sharper of its poster and thumbnail, as the tile is large.
-                val bytes = art.awaitAll().filterNotNull().maxByOrNull { landscapeWidth(it) ?: 0 }
-                bytes?.let { upNextItem(packageName, program, it, large = true) }
+        val source = programs.joinToString("\n") { it.key }
+        // Nothing has changed since last time, so there's nothing to fetch.
+        val previous = cache[packageName]
+        if (previous?.complete == true && previous.source == source) return@coroutineScope Loaded(previous.art, true, source)
+        val known = previous?.art?.recommendations.orEmpty().associateBy { it.key }
+        // Only what's new is fetched: usually just the program the user was watching.
+        val art = programs.map { program -> if (program.key in known) emptyList() else program.art.map(::download) }
+        val recommendations = programs.indices.map { i ->
+            async {
+                known[programs[i].key] ?: run {
+                    // The sharper of its poster and thumbnail, as the tile is large.
+                    val bytes = art[i].awaitAll().filterNotNull().maxByOrNull { landscapeWidth(it) ?: 0 }
+                    bytes?.let { withContext(decoding) { upNextItem(packageName, programs[i], it, large = true) } }
+                }
             }
         }.awaitAll().filterNotNull()
-        val complete = downloads.values.awaitAll().none { it == null }
-        val signature = recommendations.joinToString("|") { it.title + it.detail + it.intentUri }
+        // A program's other picture can stand in for one that won't load, so that alone isn't worth another try.
+        val complete = programs.indices.all { i -> programs[i].key in known || art[i].any { it.await() != null } }
+        val signature = recommendations.joinToString("\n") { it.key }
         val heading = if (watchNext.any { program -> recommendations.any { it.title == program.title } }) "Up Next" else "Recommended"
-        Loaded(recommendations.takeIf { it.isNotEmpty() }?.let { ShelfArt(packageName, it, heading, signature) }, complete)
+        Loaded(recommendations.takeIf { it.isNotEmpty() }?.let { ShelfArt(packageName, it, heading, signature) }, complete, source)
     }
 
     /** The tile for [program], or null if it has no title or its art is too small to use. */
@@ -217,7 +241,7 @@ class TopShelfRepository(context: Context) {
         } ?: return null
         program.progress?.let { drawProgress(thumbnail, it) }
         val glow = Bitmap.createScaledBitmap(thumbnail, GLOW_WIDTH, GLOW_HEIGHT, true)
-        return UpNextItem(packageName, title, thumbnail.onGraphicsChip(), glow, program.detail, program.intentUri, program.place)
+        return UpNextItem(packageName, title, thumbnail.onGraphicsChip(), glow, program.detail, program.intentUri, program.place, program.key)
     }
 
     private class Program(
@@ -233,6 +257,9 @@ class TopShelfRepository(context: Context) {
         val watchNextType: Int?,
         val place: String,
     ) {
+        /** Differs whenever anything drawn on this program's tile would. */
+        val key: String get() = "$title|$detail|$progress|$intentUri|$art"
+
         /** Started, or the next episode of something that was. A program with no stated type counts only if it's been started. */
         val isContinuing: Boolean
             get() = when (watchNextType) {
@@ -399,6 +426,8 @@ class TopShelfRepository(context: Context) {
         private const val MAX_UP_NEXT = 8
         /** About what fits across the screen twice, as tvOS's rows hold. */
         private const val MAX_ROW = 10
+        private const val MAX_DOWNLOADS = 4
+        private const val MAX_DECODES = 2
         /** Plenty for a picture that's only ever blurred into the stage's colors. */
         private const val GLOW_WIDTH = 192
         private const val GLOW_HEIGHT = 108
