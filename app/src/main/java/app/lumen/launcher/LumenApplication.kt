@@ -45,9 +45,13 @@ class AppContainer(context: Context) {
      *
      * Called when the activity stops rather than from onTrimMemory: with the Home Button service bound,
      * Android counts this process as in the foreground, so it wouldn't be told its UI is hidden.
+     *
+     * Not when the TV went to sleep: no app is using the screen then, and reading every row again on
+     * waking, while Google TV's own home and services start up too, kept the remote from answering.
      */
-    fun onHidden() {
+    fun onHidden(asleep: Boolean) {
         releaseRows?.cancel()
+        if (asleep) return
         releaseRows = scope.launch {
             delay(ROWS_KEPT_WHILE_HIDDEN_MS)
             topShelf.releaseRows()

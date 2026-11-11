@@ -83,11 +83,23 @@ internal fun Hero(
     onRecommendationFocused: (UpNextItem) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val wanted = shelfArt?.takeIf { visible && it.recommendations.isNotEmpty() }
+    // Another app's row waits for focus to rest a moment, so gliding along the dock doesn't build and
+    // throw away a row of large tiles for every app passed, and the work of building one stays out of
+    // the first frames of the move. The same app's row, coming back or refreshed, shows at once.
+    var shown by remember { mutableStateOf(wanted) }
+    val lastShown = remember { arrayOf(wanted?.packageName) }
+    LaunchedEffect(wanted) {
+        if (wanted != null && wanted.packageName != lastShown[0]) delay(ROW_SETTLE_MS)
+        shown = wanted
+        if (wanted != null) lastShown[0] = wanted.packageName
+    }
     Box(modifier) {
         // Keyed by app, so one app's row fades out as the next one's fades in, and gone entirely
         // while browsing below, so focus can't land in it from the grid.
         AnimatedContent(
-            targetState = shelfArt?.takeIf { visible && it.recommendations.isNotEmpty() },
+            // The last app's row goes at once, rather than waiting with the next.
+            targetState = shown?.takeIf { it.packageName == wanted?.packageName },
             contentKey = { it?.packageName },
             transitionSpec = { EnterTransition.None togetherWith ExitTransition.None using null },
             contentAlignment = Alignment.BottomStart,
@@ -124,6 +136,8 @@ internal fun Hero(
 
 /** Large tiles grow less, so they stay clear of their neighbors. */
 private const val SHELF_ROW_FOCUS_SCALE = 1.05f
+/** Shorter than the old row's fade out, so the stage never stands empty between two rows. */
+private const val ROW_SETTLE_MS = 100L
 
 /**
  * The [hero]'s own row of programs from its TV channels, once focus has rested on it for a moment, so
@@ -158,6 +172,7 @@ internal fun rememberShelfArt(hero: State<AppInfo?>, enabled: Boolean, removedPr
                     .drop(1)
                     .collectLatest { resumed ->
                         if (!resumed) return@collectLatest
+                        delay(RESUME_SETTLE_MS)
                         viewModel.expireShelfArt()
                         art.value = viewModel.refreshShelfArt(app)
                         delay(SHELF_ART_RECHECK_MS)

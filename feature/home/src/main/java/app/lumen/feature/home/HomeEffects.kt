@@ -25,6 +25,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 
 private const val CONTINUE_RECHECK_MS = 20_000L
+internal const val RESUME_SETTLE_MS = 1_000L
 private const val SETTLE_TIMEOUT_MS = 1_000L
 private const val PENDING_FOCUS_TRIES = 20
 private const val PENDING_FOCUS_RETRY_MS = 50L
@@ -41,6 +42,9 @@ internal fun ContinueWatchingRefresh(viewModel: HomeViewModel, allApps: List<App
             .distinctUntilChanged()
             .collectLatest { resumed ->
                 if (!resumed || tvAppPackages.isEmpty()) return@collectLatest
+                // Waking the TV, Google TV's own home can take the screen several times over; work starts
+                // only once Atrium has kept it a moment, rather than again on every return.
+                delay(RESUME_SETTLE_MS)
                 viewModel.refreshContinueWatching(tvAppPackages)
                 delay(CONTINUE_RECHECK_MS)
                 viewModel.refreshContinueWatching(tvAppPackages)

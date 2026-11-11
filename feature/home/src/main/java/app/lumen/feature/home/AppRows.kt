@@ -43,7 +43,7 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.layout.boundsInRoot
-import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.onPlaced
 import androidx.compose.ui.layout.positionInParent
 import androidx.compose.ui.platform.LocalContext
@@ -230,20 +230,19 @@ private fun Modifier.animatePlacement(): Modifier = composed {
 @Composable
 private fun FolderTile(folder: HomeItem.Folder, actions: TileActions, lifted: Boolean, modifier: Modifier, tileModifier: Modifier) {
     val art = remember(folder.apps) { folderArt(folder.apps) }
-    // Written on every layout pass, read only on hold, so it's a plain holder, not state.
-    val bounds = remember { arrayOf(Rect.Zero) }
+    val bounds = remember { TileBounds() }
     AppTile(
         label = folder.folder.name,
         art = art,
         onClick = { actions.onOpenFolder(folder) },
-        onLongClick = { actions.onFolderOptions(folder, bounds[0]) },
+        onLongClick = { actions.onFolderOptions(folder, bounds.inWindow()) },
         onFocused = { actions.onFolderFocused(folder) },
         translucent = true,
         lifted = lifted,
         modifier = modifier,
         tileModifier = tileModifier
             .focusRequester(actions.focusFor(folder.key))
-            .onGloballyPositioned { bounds[0] = it.boundsInRoot() },
+            .then(bounds.modifier),
     )
 }
 
@@ -312,24 +311,34 @@ private const val SETTINGS_ART_HEIGHT = 270
 private fun LauncherTile(app: AppInfo, actions: TileActions, lifted: Boolean, modifier: Modifier, tileModifier: Modifier, showLabel: Boolean = true) {
     val art = remember(app.art) { app.art.asImageBitmap() }
     val view = LocalView.current
-    // Written on every layout pass, read only on click, so it's a plain holder, not state.
-    val bounds = remember { arrayOf(Rect.Zero) }
+    val bounds = remember { TileBounds() }
     AppTile(
         label = app.label,
         art = art,
         onClick = {
-            val r = bounds[0]
+            val r = bounds.inWindow()
             // The app's window grows out of the tile, as on tvOS.
             val zoom = ActivityOptions.makeScaleUpAnimation(view, r.left.toInt(), r.top.toInt(), r.width.toInt(), r.height.toInt())
             actions.onLaunch(app, zoom.toBundle())
         },
-        onLongClick = { actions.onOptions(app, bounds[0]) },
+        onLongClick = { actions.onOptions(app, bounds.inWindow()) },
         onFocused = { actions.onFocused(app) },
         lifted = lifted,
         showLabel = showLabel,
         modifier = modifier,
         tileModifier = tileModifier
             .focusRequester(actions.focusFor(app.packageName))
-            .onGloballyPositioned { bounds[0] = it.boundsInRoot() },
+            .then(bounds.modifier),
     )
+}
+
+/**
+ * Where a tile is in the window, worked out only when asked, on a click or a hold. A position callback
+ * would run for every tile on the screen on every frame of a scroll, for a value that's rarely read.
+ */
+internal class TileBounds {
+    private var coordinates: LayoutCoordinates? = null
+    val modifier = Modifier.onPlaced { coordinates = it }
+
+    fun inWindow(): Rect = coordinates?.takeIf { it.isAttached }?.boundsInRoot() ?: Rect.Zero
 }

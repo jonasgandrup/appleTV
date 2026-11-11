@@ -3,10 +3,12 @@ package app.lumen.feature.home
 import androidx.compose.runtime.getValue
 import android.graphics.Bitmap
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.EnterExitState
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.PaddingValues
@@ -28,6 +30,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
@@ -259,7 +262,11 @@ fun HomeScreen(
                                             if (it.hasFocus) ui.browsingBelow = false
                                         }
                                         // Fades as it scrolls under the top edge, rather than leaving a strip of empty glass there.
-                                        .graphicsLayer { alpha = ui.listState.visibleFraction(SHELF_KEY).let { ((it - 0.45f) / 0.35f).coerceIn(0f, 1f) } },
+                                        // Each piece faded in place, sparing the GPU an offscreen copy of the whole row on every frame of a scroll.
+                                        .graphicsLayer {
+                                            alpha = ui.listState.visibleFraction(SHELF_KEY).let { ((it - 0.45f) / 0.35f).coerceIn(0f, 1f) }
+                                            compositingStrategy = CompositingStrategy.ModulateAlpha
+                                        },
                                 )
                             }
                         }
@@ -303,15 +310,27 @@ fun HomeScreen(
                 if (state.settings.showClock) {
                     AnimatedVisibility(
                         visible = !ui.browsingBelow,
-                        enter = fadeIn(tween(300)),
-                        exit = fadeOut(tween(150)),
+                        enter = EnterTransition.None,
+                        exit = ExitTransition.None,
                         modifier = Modifier
                             .align(Alignment.TopEnd)
-                            .padding(top = LumenDimens.SafeVertical, end = LumenDimens.SafeHorizontal)
-                            // Control Center shows the time in this same spot. Kept in place, so focus can come back to it.
-                            .graphicsLayer { alpha = if (ui.controlCenterOpen) 0f else 1f },
+                            .padding(top = LumenDimens.SafeVertical, end = LumenDimens.SafeHorizontal),
                     ) {
-                        HomeClock(device, state.settings.profileName, profilePicture, onClick = { ui.controlCenterOpen = true })
+                        // Faded here rather than with fadeIn and fadeOut, which would copy it offscreen on every frame
+                        // of the rows sliding, the busiest moment there is.
+                        val clockAlpha = transition.animateFloat(
+                            transitionSpec = { tween(if (targetState == EnterExitState.Visible) 300 else 150) },
+                            label = "clockAlpha",
+                        ) { if (it == EnterExitState.Visible) 1f else 0f }
+                        Box(
+                            Modifier.graphicsLayer {
+                                // Control Center shows the time in this same spot. Kept in place, so focus can come back to it.
+                                alpha = if (ui.controlCenterOpen) 0f else clockAlpha.value
+                                compositingStrategy = CompositingStrategy.ModulateAlpha
+                            },
+                        ) {
+                            HomeClock(device, state.settings.profileName, profilePicture, onClick = { ui.controlCenterOpen = true })
+                        }
                     }
                 }
 

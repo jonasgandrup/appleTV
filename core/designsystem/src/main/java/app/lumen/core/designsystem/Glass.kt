@@ -137,6 +137,9 @@ private class LiquidGlassNode(
     private var layer: GraphicsLayer? = null
     /** What the layer was last drawn with, so it's drawn again only when one of these changes. */
     private var drawnFor: List<Any?>? = null
+    /** The glass as it was over the last frost, kept while the new frost fades in over it. */
+    private var fadingLayer: GraphicsLayer? = null
+    private var fadingDrawnFor: List<Any?>? = null
     private var shape: GlassShape? = null
 
     fun update(corner: Dp, tint: Color, clear: Boolean) {
@@ -146,18 +149,25 @@ private class LiquidGlassNode(
         this.clear = clear
         shape = null
         drawnFor = null
+        fadingDrawnFor = null
         invalidateDraw()
     }
 
     override fun onAttach() {
-        layer = requireGraphicsContext().createGraphicsLayer().apply { compositingStrategy = CompositingStrategy.Offscreen }
+        val graphics = requireGraphicsContext()
+        layer = graphics.createGraphicsLayer().apply { compositingStrategy = CompositingStrategy.Offscreen }
+        fadingLayer = graphics.createGraphicsLayer().apply { compositingStrategy = CompositingStrategy.Offscreen }
         readLocals()
     }
 
     override fun onDetach() {
-        layer?.let { requireGraphicsContext().releaseGraphicsLayer(it) }
+        val graphics = requireGraphicsContext()
+        layer?.let(graphics::releaseGraphicsLayer)
+        fadingLayer?.let(graphics::releaseGraphicsLayer)
         layer = null
+        fadingLayer = null
         drawnFor = null
+        fadingDrawnFor = null
     }
 
     // The frost behind can change, as when a screen's capture arrives, so these are watched rather than read once.
@@ -186,27 +196,65 @@ private class LiquidGlassNode(
         val shape = shape?.takeIf { it.size == size && it.density == density } ?: GlassShape(this, corner, tint, clear).also {
             shape = it
             drawnFor = null
+            fadingDrawnFor = null
         }
         val frost = liveFrost
         val live = frost?.image
         val backdrop = (live ?: fixedBackdrop)?.takeIf { window != IntSize.Zero }
         val fade = if (live != null && backdrop != null) frost.fade else 1f
         val previous = frost?.previous?.takeIf { fade < 1f && backdrop != null }
+        val fading = fadingLayer
+        if (previous != null && fading != null && shape.margin == 0f) {
+            // A new frost fading in, as after every move along the dock. Rather than bending both frosts
+            // afresh on every frame of the fade, the glass is drawn once over each and the two pictures
+            // are faded. Glass over a frost is the frost plus the same overlays, so that's the same
+            // picture. Only for glass without a shadow, which would darken where the two overlap.
+            val newKey = listOf(backdrop, null, 1f, origin, window)
+            val oldKey = listOf(previous, null, 1f, origin, window)
+            // The glass already drawn over the old frost is the one to fade from.
+            if (fadingDrawnFor != oldKey && drawnFor == oldKey) {
+                fadingLayer = layer
+                this@LiquidGlassNode.layer = fading
+                fadingDrawnFor = drawnFor
+                drawnFor = null
+            }
+            val current = this@LiquidGlassNode.layer ?: return drawContent()
+            val outgoing = fadingLayer ?: return drawContent()
+            if (fadingDrawnFor != oldKey) {
+                fadingDrawnFor = oldKey
+                recordGlass(outgoing, shape, previous, null, 1f)
+            }
+            if (drawnFor != newKey) {
+                drawnFor = newKey
+                recordGlass(current, shape, backdrop, null, 1f)
+            }
+            outgoing.alpha = 1f
+            drawLayer(outgoing)
+            current.alpha = fade
+            drawLayer(current)
+            drawContent()
+            return
+        }
         val key = listOf(backdrop, previous, fade, origin, window)
         if (key != drawnFor) {
             drawnFor = key
-            val margin = shape.margin
-            layer.topLeft = IntOffset(-margin.roundToInt(), -margin.roundToInt())
-            // Its own Density: handed this scope, the recording would ask it for its density, which asks the recording.
-            layer.record(Density(density, fontScale), layoutDirection, IntSize((size.width + margin * 2).roundToInt(), (size.height + margin * 2).roundToInt())) {
-                translate(margin, margin) {
-                    // The glass's own size, not the layer's, for everything measured from its edges.
-                    withSize(shape.size) { drawGlass(shape, backdrop, previous, fade) }
-                }
-            }
+            recordGlass(layer, shape, backdrop, previous, fade)
         }
+        layer.alpha = 1f
         drawLayer(layer)
         drawContent()
+    }
+
+    private fun ContentDrawScope.recordGlass(layer: GraphicsLayer, shape: GlassShape, backdrop: ImageBitmap?, previous: ImageBitmap?, fade: Float) {
+        val margin = shape.margin
+        layer.topLeft = IntOffset(-margin.roundToInt(), -margin.roundToInt())
+        // Its own Density: handed this scope, the recording would ask it for its density, which asks the recording.
+        layer.record(Density(density, fontScale), layoutDirection, IntSize((size.width + margin * 2).roundToInt(), (size.height + margin * 2).roundToInt())) {
+            translate(margin, margin) {
+                // The glass's own size, not the layer's, for everything measured from its edges.
+                withSize(shape.size) { drawGlass(shape, backdrop, previous, fade) }
+            }
+        }
     }
 
     /** [image] sliced for this glass, where there are no shaders to bend it. */

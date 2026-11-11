@@ -24,10 +24,9 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.focusRestorer
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.layout.boundsInRoot
-import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.Dp
@@ -68,7 +67,10 @@ internal fun UpNextRow(
         LumenText(
             heading,
             LumenType.Section,
-            Modifier.padding(start = LumenDimens.SafeHorizontal).graphicsLayer { alpha = headingAlpha() },
+            Modifier.padding(start = LumenDimens.SafeHorizontal).graphicsLayer {
+                alpha = headingAlpha()
+                compositingStrategy = CompositingStrategy.ModulateAlpha
+            },
             color = LumenColors.TextSecondary,
         )
         LazyRow(
@@ -110,8 +112,7 @@ private fun UpNextTile(
     val context = LocalContext.current
     val view = LocalView.current
     val art = remember(item.thumbnail) { item.thumbnail.asImageBitmap() }
-    // Written on every layout pass, read only on click, so it's a plain holder, not state.
-    val bounds = remember { arrayOf(Rect.Zero) }
+    val bounds = remember { TileBounds() }
     var focused by remember { mutableStateOf(false) }
     // Timed like a tile's own label, so the text arrives with the tile's growth.
     val labelAlpha by animateFloatAsState(if (focused) 1f else 0f, tween(220), label = "upNextLabel")
@@ -120,12 +121,12 @@ private fun UpNextTile(
             label = item.title,
             art = art,
             onClick = {
-                val r = bounds[0]
+                val r = bounds.inWindow()
                 // The program grows out of its tile, like an app from the dock.
                 val zoom = ActivityOptions.makeScaleUpAnimation(view, r.left.toInt(), r.top.toInt(), r.width.toInt(), r.height.toInt())
                 openUpNext(context, item, zoom.toBundle())
             },
-            onLongClick = { onOptions(item, bounds[0]) },
+            onLongClick = { onOptions(item, bounds.inWindow()) },
             width = width,
             height = height,
             showLabel = false,
@@ -135,10 +136,16 @@ private fun UpNextTile(
                     focused = it.isFocused
                     if (it.isFocused) onFocused(item)
                 }
-                .onGloballyPositioned { bounds[0] = it.boundsInRoot() },
+                .then(bounds.modifier),
         )
         // Room for both lines is always kept, so the row doesn't jump as focus arrives. Clears the focused tile's growth.
-        Column(Modifier.padding(top = 12.dp).height(ProgramLabelHeight).graphicsLayer { alpha = labelAlpha }) {
+        Column(
+            Modifier.padding(top = 12.dp).height(ProgramLabelHeight).graphicsLayer {
+                alpha = labelAlpha
+                // The two lines don't overlap, so fading each in place looks the same, without an offscreen pass.
+                compositingStrategy = CompositingStrategy.ModulateAlpha
+            },
+        ) {
             LumenText(item.title, LumenType.Body, maxLines = 1)
             listOfNotNull(appName, item.detail).joinToString(" · ").ifEmpty { null }?.let {
                 LumenText(it, LumenType.Caption, color = LumenColors.TextSecondary, maxLines = 1)

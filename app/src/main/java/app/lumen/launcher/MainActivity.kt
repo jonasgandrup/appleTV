@@ -2,6 +2,7 @@ package app.lumen.launcher
 
 import android.content.Intent
 import android.os.Bundle
+import android.os.PowerManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import app.lumen.core.apps.TopShelfRepository
@@ -36,7 +37,9 @@ class MainActivity : ComponentActivity() {
 
     override fun onStop() {
         super.onStop()
-        (application as LumenApplication).container.onHidden()
+        // The screen going off stops this too, but then nothing else wants the memory.
+        val asleep = !getSystemService(PowerManager::class.java).isInteractive
+        (application as LumenApplication).container.onHidden(asleep)
     }
 
     override fun onDestroy() {

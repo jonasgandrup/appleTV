@@ -33,6 +33,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -42,6 +43,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
@@ -84,16 +86,13 @@ fun LumenText(
 }
 
 /**
- * The D-pad direction that last moved focus between tiles, so the newly focused tile can carry
- * that motion. Read and cleared by the tile that gains focus; focus arriving from anything
- * other than a tile leaves it at zero, so that tile doesn't lean.
+ * How far a tile slides toward a press that has nowhere to go, as at the end of a row, so the press
+ * is still answered. When focus does move, nothing slides: one tile sinks as the next one grows, as
+ * on tvOS, which sways a focused item only as a finger moves on the Siri Remote's touch surface.
+ * Flat, as a 3D lean would make the Chromecast redraw the tile's rounded corners and shadow the slow
+ * way on every frame.
  */
-private object TileMotion {
-    var dx = 0f
-    var dy = 0f
-}
-
-private const val TILT_DEGREES = 6f
+private val NUDGE = 5.dp
 
 /** Scale of a focused tile. It stays at that size while focus rests on it, as on tvOS. */
 private const val FOCUS_SCALE = 1.12f
@@ -123,7 +122,7 @@ fun animatePressableScale(focused: Boolean, pressed: Boolean, focusedScale: Floa
     )
 
 /**
- * A tvOS-style app tile with a glass edge: lifts and grows on focus, leans into D-pad presses, and
+ * A tvOS-style app tile with a glass edge: lifts and grows on focus, is nudged by a press that can't move focus, and
  * reveals its label underneath. [art] is the app's 16:9 tile artwork.
  */
 @Composable
@@ -148,20 +147,16 @@ fun AppTile(
 ) {
     var focused by remember { mutableStateOf(false) }
     var pressed by remember { mutableStateOf(false) }
-    // -1..1 per axis; positive leans right / down.
-    val tiltX = remember { Animatable(0f) }
-    val tiltY = remember { Animatable(0f) }
+    // -1..1 per axis; positive nudges right / down.
+    val nudgeX = remember { Animatable(0f) }
+    val nudgeY = remember { Animatable(0f) }
     val scope = rememberCoroutineScope()
     val settle = spring<Float>(dampingRatio = 0.6f, stiffness = 260f)
+    // Focus moving on in the middle of a nudge takes over from it.
     LaunchedEffect(focused) {
-        if (focused) {
-            tiltX.snapTo(TileMotion.dx)
-            tiltY.snapTo(TileMotion.dy)
-            TileMotion.dx = 0f
-            TileMotion.dy = 0f
-        }
-        launch { tiltX.animateTo(0f, settle) }
-        launch { tiltY.animateTo(0f, settle) }
+        if (focused) return@LaunchedEffect
+        launch { nudgeX.animateTo(0f, settle) }
+        launch { nudgeY.animateTo(0f, settle) }
     }
     // Wiggles for as long as the tile is lifted in Edit Home Screen, as on tvOS.
     val wiggle = remember { Animatable(0f) }
@@ -216,14 +211,13 @@ fun AppTile(
                         Key.DirectionDown -> 0f to 1f
                         else -> return@onPreviewKeyEvent false
                     }
-                    TileMotion.dx = dx
-                    TileMotion.dy = dy
-                    // Lean toward the press. If focus moves on, this tile settles back; at the
-                    // end of a row the lean is the only feedback, like tvOS.
+                    // Nudged toward the press only if focus is still here a frame later, with nowhere to go.
                     if (event.nativeKeyEvent.repeatCount == 0) {
                         scope.launch {
-                            launch { tiltX.animateTo(dx * 0.6f, tween(90)); tiltX.animateTo(0f, settle) }
-                            launch { tiltY.animateTo(dy * 0.6f, tween(90)); tiltY.animateTo(0f, settle) }
+                            withFrameNanos { }
+                            if (!focused) return@launch
+                            launch { nudgeX.animateTo(dx * 0.6f, tween(90)); nudgeX.animateTo(0f, settle) }
+                            launch { nudgeY.animateTo(dy * 0.6f, tween(90)); nudgeY.animateTo(0f, settle) }
                         }
                     }
                     false
@@ -232,25 +226,23 @@ fun AppTile(
                 .graphicsLayer {
                     scaleX = scale
                     scaleY = scale
-                    // The side the remote points toward tips away from the viewer.
-                    rotationY = tiltX.value * TILT_DEGREES
-                    rotationX = -tiltY.value * TILT_DEGREES
+                    translationX = nudgeX.value * NUDGE.toPx()
+                    translationY = nudgeY.value * NUDGE.toPx()
                     rotationZ = wiggle.value
-                    cameraDistance = 16f * density
                     shadowElevation = elevation.value.toPx()
                     this.shape = shape
                     clip = true
                 }
                 .drawWithContent {
                     drawContent()
-                    // A soft light above the glass while focused, sliding as the tile tilts.
+                    // A soft light above the glass while focused, sliding as the tile is nudged.
                     if (focusAlpha > 0f) {
                         drawRect(
                             Brush.radialGradient(
                                 listOf(Color.White.copy(alpha = 0.16f * focusAlpha), Color.Transparent),
                                 center = Offset(
-                                    size.width * (0.3f - tiltX.value * 0.35f),
-                                    size.height * (-0.1f - tiltY.value * 0.35f),
+                                    size.width * (0.3f - nudgeX.value * 0.35f),
+                                    size.height * (-0.1f - nudgeY.value * 0.35f),
                                 ),
                                 radius = size.width * 0.75f,
                             ),
@@ -272,7 +264,11 @@ fun AppTile(
             LumenText(
                 text = label,
                 style = LumenType.Caption,
-                modifier = Modifier.graphicsLayer { alpha = focusAlpha },
+                modifier = Modifier.graphicsLayer {
+                    alpha = focusAlpha
+                    // Faded in place: a layer of its own would cost an offscreen pass on every frame of the fade.
+                    compositingStrategy = CompositingStrategy.ModulateAlpha
+                },
                 maxLines = 1,
                 textAlign = TextAlign.Center,
             )
