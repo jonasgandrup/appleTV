@@ -59,6 +59,13 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.layout.ContentScale
+import app.lumen.core.designsystem.GradientFill
+import app.lumen.core.designsystem.rememberWallpaperImage
 import androidx.compose.ui.unit.dp
 import androidx.core.graphics.drawable.toBitmap
 import androidx.lifecycle.Lifecycle
@@ -150,7 +157,8 @@ fun SettingsScreen(viewModel: SettingsViewModel) {
                 verticalArrangement = Arrangement.Center,
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
-                PageGlyph(visual.glyph)
+                // On the Wallpaper page the picture is the home screen itself, wearing whichever wallpaper is in focus.
+                PageGlyph(visual.glyph, (preview ?: settings.wallpaper).takeIf { page == SettingsPage.Wallpaper })
                 Spacer(Modifier.height(22.dp))
                 // Holds its height, so the picture doesn't shift as descriptions of different lengths come and go.
                 AnimatedContent(
@@ -221,25 +229,74 @@ private val HintHeight = 84.dp
 private val ListFadeEdge = 20.dp
 private val ListPadding = PaddingValues(horizontal = 16.dp, vertical = 20.dp)
 
-/** The large picture beside the list, drawn as one of tvOS's graphite Settings tiles. */
+/**
+ * The large picture beside the list, drawn as one of tvOS's graphite Settings tiles. With a
+ * [wallpaper], it's a small home screen in that wallpaper instead, so a choice can be judged as it
+ * will look rather than through the page's dim.
+ */
 @Composable
-private fun PageGlyph(@DrawableRes glyph: Int) {
+private fun PageGlyph(@DrawableRes glyph: Int, wallpaper: Wallpaper? = null) {
     val shape = RoundedCornerShape(GlyphCorner)
     Box(
         Modifier
             .size(GlyphWidth, GlyphHeight)
-            .background(Brush.verticalGradient(0f to GlyphTop, 1f to GlyphBottom), shape)
+            .clip(shape)
+            .background(Brush.verticalGradient(0f to GlyphTop, 1f to GlyphBottom))
             .drawWithContent {
                 drawContent()
                 drawGlassRim(GlyphCorner, strength = 0.5f)
             },
         contentAlignment = Alignment.Center,
     ) {
-        Crossfade(targetState = glyph, animationSpec = tween(200), label = "pageGlyph") { icon ->
-            Image(painterResource(icon), null, Modifier.size(GlyphIconSize))
+        Crossfade(targetState = wallpaper ?: glyph, animationSpec = tween(200), label = "pageGlyph") { shown ->
+            when (shown) {
+                is Wallpaper -> MiniHomeScreen(shown)
+                is Int -> Image(painterResource(shown), null, Modifier.size(GlyphIconSize))
+            }
         }
     }
 }
+
+/** The home screen in miniature: [wallpaper] with the top row's glass and tiles sketched over it. */
+@Composable
+private fun MiniHomeScreen(wallpaper: Wallpaper) {
+    Box(Modifier.fillMaxSize()) {
+        when (wallpaper) {
+            is Wallpaper.Gradient -> GradientFill(wallpaper.preset, Modifier.fillMaxSize())
+            is Wallpaper.Image -> rememberWallpaperImage(wallpaper.path, maxWidth = MINI_HOME_DECODE_WIDTH)?.let {
+                Image(it, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+            }
+        }
+        Spacer(
+            Modifier.fillMaxSize().drawBehind {
+                val inset = size.width * 0.06f
+                val dockHeight = size.height * 0.2f
+                val dockTop = size.height * 0.68f
+                drawRoundRect(
+                    Color.White.copy(alpha = 0.16f),
+                    topLeft = Offset(inset, dockTop),
+                    size = Size(size.width - inset * 2, dockHeight),
+                    cornerRadius = CornerRadius(dockHeight * 0.36f),
+                )
+                val gap = dockHeight * 0.16f
+                val tileWidth = (size.width - inset * 2 - gap * (MINI_HOME_TILES + 1)) / MINI_HOME_TILES
+                val tileHeight = dockHeight - gap * 2
+                repeat(MINI_HOME_TILES) { i ->
+                    drawRoundRect(
+                        // The first stands a little brighter, as the tile in focus does.
+                        Color.White.copy(alpha = if (i == 0) 0.92f else 0.5f),
+                        topLeft = Offset(inset + gap + i * (tileWidth + gap), dockTop + gap),
+                        size = Size(tileWidth, tileHeight),
+                        cornerRadius = CornerRadius(tileHeight * 0.24f),
+                    )
+                }
+            },
+        )
+    }
+}
+
+private const val MINI_HOME_TILES = 6
+private const val MINI_HOME_DECODE_WIDTH = 500
 
 private val GlyphWidth = 250.dp
 private val GlyphHeight = 150.dp
@@ -521,7 +578,17 @@ private fun SystemPage(rows: SettingsRows) {
                 onClick = { SystemActions.openStockHome(context) },
             )
         }
-        item { SettingsRow(rows, initial, title = "About Atrium", hint = "A home screen for your TV, modeled on Apple TV's.", value = "Version $version", onClick = {}) }
+        item {
+            SettingsRow(
+                rows,
+                initial,
+                title = "About Atrium",
+                hint = "A home screen for your TV, modeled on Apple TV's. Select to see its permissions and storage in Android.",
+                value = "Version $version",
+                chevron = true,
+                onClick = { SystemActions.openAppInfo(context, context.packageName) },
+            )
+        }
     }
 }
 

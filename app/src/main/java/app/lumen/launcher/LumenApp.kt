@@ -2,10 +2,13 @@ package app.lumen.launcher
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.fillMaxSize
@@ -19,6 +22,9 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.unit.IntSize
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import app.lumen.core.designsystem.LocalUiSounds
@@ -57,6 +63,10 @@ fun LumenApp(container: AppContainer, homePresses: Flow<Boolean>, controlCenterR
     val settings by container.settings.settings.collectAsStateWithLifecycle(LauncherSettings())
     // Keeps the home screen's scroll position while Settings is open, so coming back lands where it left off.
     val saved = rememberSaveableStateHolder()
+    // Where the Settings tile was when it was selected, as a place on the screen, so Settings can grow
+    // out of it and shrink back into it, the way apps do from their tiles.
+    var screen by remember { mutableStateOf(IntSize.Zero) }
+    var settingsOrigin by remember { mutableStateOf(TransformOrigin.Center) }
 
     // A launcher has nowhere to go back to: Back on home does nothing.
     BackHandler(enabled = true) {
@@ -67,9 +77,20 @@ fun LumenApp(container: AppContainer, homePresses: Flow<Boolean>, controlCenterR
         AnimatedContent(
             targetState = destination,
             transitionSpec = {
-                (fadeIn(tween(350)) + scaleIn(tween(350), initialScale = 0.98f)) togetherWith fadeOut(tween(200))
+                val grow = tween<Float>(SETTINGS_ZOOM_MS, easing = FastOutSlowInEasing)
+                if (targetState == Destination.Settings) {
+                    // Home stays lit behind Settings until it's covered, so Settings never grows over black.
+                    (fadeIn(tween(SETTINGS_FADE_MS)) + scaleIn(grow, initialScale = SETTINGS_TILE_SCALE, transformOrigin = settingsOrigin)) togetherWith
+                        fadeOut(snap(delayMillis = SETTINGS_ZOOM_MS))
+                } else {
+                    // Settings stays in front as it leaves, so it's seen going back into its tile.
+                    (fadeIn(tween(SETTINGS_FADE_MS)) togetherWith
+                        (fadeOut(tween(SETTINGS_FADE_MS, delayMillis = SETTINGS_ZOOM_MS - SETTINGS_FADE_MS)) +
+                            scaleOut(grow, targetScale = SETTINGS_TILE_SCALE, transformOrigin = settingsOrigin)))
+                        .apply { targetContentZIndex = -1f }
+                }
             },
-            modifier = Modifier.fillMaxSize().background(LumenColors.Background),
+            modifier = Modifier.fillMaxSize().onSizeChanged { screen = it }.background(LumenColors.Background),
             label = "destination",
         ) { target ->
             saved.SaveableStateProvider(target.name) {
@@ -78,7 +99,17 @@ fun LumenApp(container: AppContainer, homePresses: Flow<Boolean>, controlCenterR
                         viewModel = viewModel(factory = HomeViewModel.factory(container.apps, container.launcher, container.settings, container.wallpapers, container.topShelf)),
                         homePresses = homeScreenPresses,
                         controlCenterRequests = controlCenterRequests,
-                        onOpenSettings = { destination = Destination.Settings },
+                        onOpenSettings = { tile ->
+                            settingsOrigin = if (tile.isEmpty || screen == IntSize.Zero) {
+                                TransformOrigin.Center
+                            } else {
+                                TransformOrigin(
+                                    (tile.center.x / screen.width).coerceIn(0f, 1f),
+                                    (tile.center.y / screen.height).coerceIn(0f, 1f),
+                                )
+                            }
+                            destination = Destination.Settings
+                        },
                     )
                     Destination.Settings -> SettingsScreen(
                         viewModel = viewModel(factory = SettingsViewModel.factory(container.settings, container.apps, container.wallpapers)),
@@ -88,3 +119,8 @@ fun LumenApp(container: AppContainer, homePresses: Flow<Boolean>, controlCenterR
         }
     }
 }
+
+/** About a tile's share of the screen, so Settings starts at the size of the tile it grows from. */
+private const val SETTINGS_TILE_SCALE = 0.16f
+private const val SETTINGS_ZOOM_MS = 380
+private const val SETTINGS_FADE_MS = 220

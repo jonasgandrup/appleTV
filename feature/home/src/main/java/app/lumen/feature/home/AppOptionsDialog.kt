@@ -1,5 +1,6 @@
 package app.lumen.feature.home
 
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -10,10 +11,15 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.unit.dp
 import app.lumen.core.designsystem.GlassDialog
+import app.lumen.core.designsystem.LocalOverlayClose
+import app.lumen.core.designsystem.LumenColors
+import app.lumen.core.designsystem.LumenText
+import app.lumen.core.designsystem.LumenType
 import app.lumen.core.designsystem.MenuRow
 
 /** Where an app can go from tvOS's "Move to" menu. */
@@ -50,24 +56,45 @@ internal class AppOptions(
 @Composable
 internal fun AppOptionsDialog(anchor: Rect, options: AppOptions, onDismiss: () -> Unit) {
     var choosingMove by remember { mutableStateOf(false) }
-    GlassDialog(onDismiss, Alignment.Center, Modifier.width(272.dp), anchor = anchor) { firstRow ->
-        fun run(action: () -> Unit): () -> Unit = {
-            onDismiss()
-            action()
-        }
+    // Coming back from the Move to list lands on the row that led there, as going back does everywhere else.
+    var cameBack by remember { mutableStateOf(false) }
+    val moveRow = remember { FocusRequester() }
+    GlassDialog(
+        onDismiss,
+        Alignment.Center,
+        Modifier.width(272.dp),
+        anchor = anchor,
+        // Back steps out of the Move to list first, and only then closes the menu.
+        onBack = {
+            choosingMove.also {
+                if (it) {
+                    cameBack = true
+                    choosingMove = false
+                }
+            }
+        },
+    ) { firstRow ->
+        val run = rememberRun(onDismiss)
         // The rows are replaced when moving between the menu and its Move to list, so focus has to follow.
         LaunchedEffect(choosingMove) {
             withFrameNanos { }
-            runCatching { firstRow.requestFocus() }
+            runCatching { (if (!choosingMove && cameBack) moveRow else firstRow).requestFocus() }
         }
         if (choosingMove) {
+            // Says which list this is, now that the row that led here is gone.
+            LumenText("Move to", LumenType.Section, Modifier.padding(start = 20.dp, top = 2.dp, bottom = 6.dp), color = LumenColors.TextSecondary)
             options.moveTargets.forEachIndexed { i, target ->
                 MenuRow(target.label, run { options.onMove(target) }, if (i == 0) Modifier.focusRequester(firstRow) else Modifier)
             }
         } else {
             val edit = options.onEditHomeScreen
             if (edit != null) MenuRow("Edit Home Screen", run(edit), Modifier.focusRequester(firstRow))
-            MenuRow("Move to", { choosingMove = true }, if (edit == null) Modifier.focusRequester(firstRow) else Modifier, chevron = true)
+            MenuRow(
+                "Move to",
+                { choosingMove = true },
+                (if (edit == null) Modifier.focusRequester(firstRow) else Modifier).focusRequester(moveRow),
+                chevron = true,
+            )
             MenuRow("Hide App", run(options.onHide))
             options.onDelete?.let { MenuRow("Delete App", run(it)) }
             MenuRow("App Info", run(options.onAppInfo))
@@ -85,10 +112,7 @@ internal fun ProgramOptionsDialog(
     onDismiss: () -> Unit,
 ) {
     GlassDialog(onDismiss, Alignment.Center, Modifier.width(350.dp), anchor = anchor) { firstRow ->
-        fun run(action: () -> Unit): () -> Unit = {
-            onDismiss()
-            action()
-        }
+        val run = rememberRun(onDismiss)
         if (onRemove != null) MenuRow("Remove from Continue Watching", run(onRemove), Modifier.focusRequester(firstRow))
         if (appLabel != null) MenuRow("Open $appLabel", run(onOpenApp), if (onRemove == null) Modifier.focusRequester(firstRow) else Modifier)
     }
@@ -98,11 +122,25 @@ internal fun ProgramOptionsDialog(
 @Composable
 internal fun FolderOptionsDialog(anchor: Rect, onEditHomeScreen: () -> Unit, onRename: () -> Unit, onDismiss: () -> Unit) {
     GlassDialog(onDismiss, Alignment.Center, Modifier.width(272.dp), anchor = anchor) { firstRow ->
-        fun run(action: () -> Unit): () -> Unit = {
-            onDismiss()
-            action()
-        }
+        val run = rememberRun(onDismiss)
         MenuRow("Edit Home Screen", run(onEditHomeScreen), Modifier.focusRequester(firstRow))
         MenuRow("Rename Folder", run(onRename))
+    }
+}
+
+/**
+ * Wraps a menu row's action so choosing it first closes the menu, the way it opened, and then acts.
+ * Read inside the menu's own content, where [LocalOverlayClose] is the menu's.
+ */
+@Composable
+internal fun rememberRun(onDismiss: () -> Unit): (() -> Unit) -> () -> Unit {
+    val close = LocalOverlayClose.current
+    return { action ->
+        {
+            close {
+                onDismiss()
+                action()
+            }
+        }
     }
 }

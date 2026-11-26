@@ -82,7 +82,8 @@ fun HomeScreen(
     viewModel: HomeViewModel,
     homePresses: Flow<Unit>,
     controlCenterRequests: MutableSharedFlow<Unit>,
-    onOpenSettings: () -> Unit,
+    /** Given the Settings tile's bounds in the window, for Settings to grow out of. */
+    onOpenSettings: (Rect) -> Unit,
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
@@ -293,9 +294,9 @@ fun HomeScreen(
                             AppGrid(
                                 tiles = gridTiles,
                                 actions = gridActions,
-                                onOpenSettings = {
+                                onOpenSettings = { tile ->
                                     viewModel.lastFocusKey = SETTINGS_FOCUS_KEY
-                                    onOpenSettings()
+                                    onOpenSettings(tile)
                                 },
                                 lifted = editor.lifted,
                                 firstTileFocus = if (dock.isEmpty()) ui.firstFocus else null,
@@ -403,7 +404,7 @@ private fun EmptyShelf() {
         contentAlignment = Alignment.CenterStart,
     ) {
         LumenText(
-            "Your Top Shelf is empty. Hold select on any app below to pin it here.",
+            "Your top row is empty. Hold Select on an app below, then choose Move to and Top Row.",
             LumenType.Body,
             color = LumenColors.TextSecondary,
         )

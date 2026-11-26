@@ -2,6 +2,7 @@ package app.lumen.feature.home
 
 import android.graphics.Bitmap
 import android.graphics.Canvas
+import android.graphics.Color as AndroidColor
 import android.graphics.ColorMatrix
 import android.graphics.ColorMatrixColorFilter
 import android.graphics.LinearGradient
@@ -212,6 +213,7 @@ internal fun Backdrop(
     val belowAmount by animateFloatAsState(if (below) 1f else 0f, tween(450), label = "below")
     val preset = (wallpaper as? Wallpaper.Gradient)?.preset
     val art = app?.art
+    val accent = app?.accentColor
     var current by remember { mutableStateOf<ImageBitmap?>(null) }
     var previous by remember { mutableStateOf<ImageBitmap?>(null) }
     val fade = remember { Animatable(1f) }
@@ -222,7 +224,9 @@ internal fun Backdrop(
         // Quick presses along the dock restart this effect before anything is baked or faded.
         if (!first) delay(BACKDROP_SETTLE_MS)
         val (next, nextFrost, nextBackground) = withContext(Dispatchers.Default) {
-            val baked = bakeBackdrop(preset, glow ?: art)
+            // A washed-out tile has no color worth blurring; the app's own color lights the stage instead.
+            val washedOut = glow == null && art != null && isWashedOut(art)
+            val baked = bakeBackdrop(preset, glow ?: art.takeUnless { washedOut }, if (washedOut) accent?.let(::accentWash) else null)
             // A transparent bake has nothing to frost by itself; glass falls back to the wallpaper's frost.
             val opaque = baked.takeUnless { it.hasAlpha() }
             // Already soft enough for the dock's glass to bend, so it needs no blur of its own.
@@ -271,11 +275,12 @@ internal fun Backdrop(
 }
 
 /**
- * Opaque over a blur of [source] or over [preset]; transparent over a photo wallpaper when there's
- * neither. Blocking.
+ * Opaque over a blur of [source], over [wash], or over [preset]; transparent over a photo wallpaper
+ * when there's none of them. Blocking.
  */
-private fun bakeBackdrop(preset: GradientPreset?, source: Bitmap?): Bitmap {
+private fun bakeBackdrop(preset: GradientPreset?, source: Bitmap?, wash: Bitmap? = null): Bitmap {
     val bitmap = source?.let(::stageBlur)
+        ?: wash
         ?: preset?.let(::renderGradient)
         ?: Bitmap.createBitmap(PHOTO_OVERLAY_WIDTH, PHOTO_OVERLAY_HEIGHT, Bitmap.Config.ARGB_8888)
     val canvas = Canvas(bitmap)
@@ -297,9 +302,57 @@ private fun bakeBackdrop(preset: GradientPreset?, source: Bitmap?): Bitmap {
         Shader.TileMode.CLAMP,
     )
     canvas.drawRect(0f, 0f, width, height, scrim)
-    if (source != null || preset != null) bitmap.setHasAlpha(false)
+    if (source != null || wash != null || preset != null) bitmap.setHasAlpha(false)
     return bitmap
 }
+
+/**
+ * The stage in an app's own color, for an app with no program in focus whose tile is mostly white or
+ * grey, as a logo on a white card is: blurred, such a tile leaves the whole screen a flat grey. Deep
+ * and lit from the top left, as the wallpapers are, and painted at that depth rather than brought to
+ * the brightness a blurred picture gets, which turns a red or a blue garish. Null when the color is
+ * itself a grey, which would do no better than the tile: the wallpaper shows instead. Blocking.
+ */
+private fun accentWash(accent: Int): Bitmap? {
+    val hsv = FloatArray(3)
+    AndroidColor.colorToHSV(accent, hsv)
+    if (hsv[1] < ACCENT_MIN_SATURATION) return null
+    fun shade(saturation: Float, value: Float) = AndroidColor.HSVToColor(floatArrayOf(hsv[0], hsv[1] * saturation, value))
+    val wash = Bitmap.createBitmap(STAGE_BLUR_WIDTH, STAGE_BLUR_HEIGHT, Bitmap.Config.ARGB_8888)
+    val paint = Paint().apply {
+        isDither = true
+        shader = LinearGradient(
+            0f, 0f, STAGE_BLUR_WIDTH.toFloat(), STAGE_BLUR_HEIGHT.toFloat(),
+            intArrayOf(shade(0.75f, 0.5f), shade(0.85f, 0.32f), shade(0.9f, 0.13f)),
+            null,
+            Shader.TileMode.CLAMP,
+        )
+    }
+    Canvas(wash).drawRect(0f, 0f, STAGE_BLUR_WIDTH.toFloat(), STAGE_BLUR_HEIGHT.toFloat(), paint)
+    return wash
+}
+
+/** Bright and nearly colorless overall. A dark tile blurs to a dark stage, which is fine as it is. */
+private fun isWashedOut(art: Bitmap): Boolean {
+    val small = Bitmap.createScaledBitmap(art, WASH_SAMPLE_WIDTH, WASH_SAMPLE_HEIGHT, true)
+    val pixels = IntArray(WASH_SAMPLE_WIDTH * WASH_SAMPLE_HEIGHT).also { small.getPixels(it, 0, WASH_SAMPLE_WIDTH, 0, 0, WASH_SAMPLE_WIDTH, WASH_SAMPLE_HEIGHT) }
+    val hsv = FloatArray(3)
+    var saturation = 0f
+    var brightness = 0f
+    for (pixel in pixels) {
+        AndroidColor.colorToHSV(pixel, hsv)
+        saturation += hsv[1] * hsv[2]
+        brightness += hsv[2]
+    }
+    return brightness / pixels.size > WASH_MIN_BRIGHTNESS && saturation / pixels.size < WASH_MAX_SATURATION
+}
+
+private const val WASH_SAMPLE_WIDTH = 32
+private const val WASH_SAMPLE_HEIGHT = 18
+private const val WASH_MIN_BRIGHTNESS = 0.5f
+private const val WASH_MAX_SATURATION = 0.25f
+/** Below this an app's color is a grey, or the mud that an icon of many colors averages to, and would light the stage no better than its tile did. */
+private const val ACCENT_MIN_SATURATION = 0.45f
 
 /**
  * [source] blurred until no shape is left, only its colors, then evened out: richer in color, and

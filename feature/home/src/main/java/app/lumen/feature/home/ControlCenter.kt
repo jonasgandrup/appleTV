@@ -39,6 +39,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
@@ -50,6 +51,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.lumen.core.designsystem.Avatar
 import app.lumen.core.designsystem.GlassOverlay
+import app.lumen.core.designsystem.LocalOverlayClose
 import app.lumen.core.designsystem.animatePressableScale
 import app.lumen.core.designsystem.LumenColors
 import app.lumen.core.designsystem.LumenDimens
@@ -134,16 +136,18 @@ internal fun ControlCenter(
     // Its session can end while the tab is showing.
     val tab = if (status.nowPlaying == null) ControlTab.General else chosenTab
     val context = LocalContext.current
-    fun run(action: () -> Unit): () -> Unit = {
-        onDismiss()
-        action()
-    }
     GlassOverlay(
-        onDismiss = { if (page == ControlPage.Main) onDismiss() else page = ControlPage.Main },
+        onDismiss = onDismiss,
         alignment = Alignment.TopEnd,
         // Its tiles float loose, so whatever's behind shows between them and has to stay back.
         dim = CONTROL_CENTER_DIM,
+        // Back returns from a panel to the tiles first, and only then closes Control Center.
+        onBack = { (page != ControlPage.Main).also { if (it) page = ControlPage.Main } },
+        // Out of the corner the clock sits in, and back into it.
+        pivot = TransformOrigin(1f, 0f),
     ) { _, first ->
+        val run = rememberRun(onDismiss)
+        val close = LocalOverlayClose.current
         // The buttons are replaced when moving between pages, so focus has to follow.
         LaunchedEffect(page) {
             withFrameNanos { }
@@ -225,7 +229,7 @@ internal fun ControlCenter(
                 }
                 ControlPage.Sound -> SoundPanel(status, onClickSounds, run(actions.onSound), first)
                 ControlPage.Network -> NetworkPanel(status.network, run(actions.onNetwork), first)
-                ControlPage.SleepTimer -> SleepTimerPanel(status.sleepEndsAt, onDismiss, first)
+                ControlPage.SleepTimer -> SleepTimerPanel(status.sleepEndsAt, { close(onDismiss) }, first)
             }
         }
     }
@@ -504,13 +508,16 @@ internal fun Timeline(playing: NowPlaying, modifier: Modifier = Modifier) {
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        LumenText(trackTime(position), LumenType.Caption, color = LumenColors.TextSecondary, maxLines = 1)
+        LumenText(trackTime(position), TimelineTime, color = LumenColors.TextSecondary, maxLines = 1)
         Box(Modifier.weight(1f).height(4.dp).background(LumenColors.Surface, CircleShape)) {
             Box(Modifier.fillMaxHeight().fillMaxWidth(fraction).background(LumenColors.TextPrimary, CircleShape))
         }
-        LumenText("-" + trackTime(playing.durationMs - position), LumenType.Caption, color = LumenColors.TextSecondary, maxLines = 1)
+        LumenText("-" + trackTime(playing.durationMs - position), TimelineTime, color = LumenColors.TextSecondary, maxLines = 1)
     }
 }
+
+/** Figures of one width, so the bar between the two times doesn't change length as the seconds tick. */
+private val TimelineTime = LumenType.Caption.copy(fontFeatureSettings = "tnum")
 
 private fun trackTime(ms: Long): String {
     val seconds = ms.coerceAtLeast(0) / 1_000

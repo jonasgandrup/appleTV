@@ -15,6 +15,7 @@ import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.VectorConverter
 import androidx.compose.animation.core.VisibilityThreshold
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -23,6 +24,8 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.runtime.Composable
@@ -32,6 +35,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
@@ -95,12 +99,22 @@ internal fun AppRow(
     lifted: AppInfo? = null,
     firstTileFocus: FocusRequester? = null,
 ) {
+    // The glass is as wide as the tiles on it: a full row fills the screen's width, as on tvOS, and a short
+    // one isn't left with a stretch of empty glass beside it. It follows as apps are moved in and out.
+    val tiles = apps.size.coerceIn(1, LumenDimens.TilesPerRow)
+    val glassWidth by animateDpAsState(
+        LumenDimens.TileWidth * tiles + LumenDimens.TileSpacing * (tiles - 1) + ShelfGlassOutset * 2,
+        spring(dampingRatio = 1f, stiffness = Spring.StiffnessMediumLow),
+        label = "dockGlass",
+    )
     Box(modifier.fillMaxWidth()) {
         // Separate from the row, which runs the full width of the screen so it can't cut off a focused tile's shadow.
         Spacer(
             Modifier
                 .matchParentSize()
                 .padding(horizontal = LumenDimens.SafeHorizontal - ShelfGlassOutset)
+                .wrapContentWidth(Alignment.Start)
+                .width(glassWidth)
                 .liquidGlass(LumenDimens.GlassCorner, tint = LumenColors.GlassTintClear, clear = true),
         )
         LazyRow(
@@ -147,7 +161,8 @@ internal sealed interface GridTile {
 internal fun AppGrid(
     tiles: List<GridTile>,
     actions: TileActions,
-    onOpenSettings: () -> Unit,
+    /** Given the Settings tile's bounds in the window, for Settings to grow out of. */
+    onOpenSettings: (Rect) -> Unit,
     modifier: Modifier = Modifier,
     lifted: HomeItem? = null,
     firstTileFocus: FocusRequester? = null,
@@ -280,10 +295,17 @@ private const val FOLDER_COLUMNS = 3
 private const val FOLDER_ROWS = 2
 
 @Composable
-private fun SettingsTile(onClick: () -> Unit, modifier: Modifier, tileModifier: Modifier) {
+private fun SettingsTile(onClick: (Rect) -> Unit, modifier: Modifier, tileModifier: Modifier) {
     val context = LocalContext.current
     val art = remember { settingsArt(context) }
-    AppTile(label = "Settings", art = art, onClick = onClick, modifier = modifier, tileModifier = tileModifier)
+    val bounds = remember { TileBounds() }
+    AppTile(
+        label = "Settings",
+        art = art,
+        onClick = { onClick(bounds.inWindow()) },
+        modifier = modifier,
+        tileModifier = tileModifier.then(bounds.modifier),
+    )
 }
 
 /** A dark gear on brushed silver, as tvOS's Settings icon is, at the same size as app tile art. */

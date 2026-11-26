@@ -249,7 +249,8 @@ internal fun ScreensaverHost(
         when (key) {
             Key.DirectionRight -> controls.slide++
             Key.DirectionLeft -> controls.slide--
-            Key.DirectionUp -> controls.picking = categories.indexOf(type).coerceAtLeast(0)
+            // With only one category there's nothing to pick, so Up leaves the picture alone.
+            Key.DirectionUp -> if (categories.size > 1) controls.picking = categories.indexOf(type).coerceAtLeast(0)
             Key.DirectionDown -> controls.showDetails = !controls.showDetails
             Key.DirectionCenter, Key.Enter, Key.NumPadEnter -> {
                 if (music == null) return false
